@@ -20,5 +20,6 @@ output:
 - #tpP: number of pred instances with exactly one gt instance
 - #fn: no predicted cell for ground truth cell
 - average precision: tpP/(tpP+fn+fp)
-  (Pred -> GT: for each predicted instance, ..
-  GT/Ref -> Pred: for each ground truth instance, ..)
+
+(Pred -> GT: for each predicted instance, ..
+GT/Ref -> Pred: for each ground truth instance, ..)
