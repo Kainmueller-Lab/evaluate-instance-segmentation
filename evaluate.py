@@ -8,7 +8,7 @@ import tifffile
 import os
 import operator
 
-def evaluate_files(res_file, gt_file):
+def evaluate_files(res_file, gt_file, foreground_only=False):
     if len(sys.argv) > 4:
         res_file = res_file.replace(".hdf", sys.argv[4] + ".hdf")
     print("loading", res_file, gt_file)
@@ -42,6 +42,9 @@ def evaluate_files(res_file, gt_file):
                           begin[1]:end[1],
                           begin[2]:end[2]]
     print(gt_labels.shape)
+    
+    if foreground_only:
+        pred_labels[gt_labels==0] = 0
 
     print("processing", res_file, gt_file)
     overlay = np.array([pred_labels.flatten(),
