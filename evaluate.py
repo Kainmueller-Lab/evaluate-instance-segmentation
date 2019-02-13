@@ -52,6 +52,10 @@ def evaluate_files(res_file, gt_file):
                                          return_counts=True, axis=1)
     conn_labels = np.transpose(conn_labels)
 
+    zeroRow = np.invert(np.any(conn_labels==[0,0],axis=1))
+    conn_counts = conn_counts[zeroRow]
+    conn_labels = conn_labels[zeroRow]
+
     # get gt cell ids and the size of the corresponding cell
     gt_labelsT, gt_counts = np.unique(gt_labels, return_counts=True)
     # get pred cell ids
@@ -85,8 +89,9 @@ def evaluate_files(res_file, gt_file):
     segP = {}
     segP2 = {}
     for (u,v), c in zip(conn_labels, conn_counts):
-        dice = 2*c/(gt_labelsD[v]+pred_labelsD[u])
-        iou = c/(gt_labelsD[v]+pred_labelsD[u]-c)
+        dice = 2.*c/(gt_labelsD[v]+pred_labelsD[u])
+        iou = 1.*c/(gt_labelsD[v]+pred_labelsD[u]-c)
+        # print("c %s gt_label %s num %s pred_label %s num %s dice %s iou %s" %(c,v,gt_labelsD[v],u,pred_labelsD[u],dice,iou))
         if c > 0.5 * gt_labelsD[v]:
             seg = iou
         else:
@@ -244,11 +249,20 @@ def evaluate_files(res_file, gt_file):
         apTP = np.count_nonzero(iouP[iouP>th])
         apFP = np.count_nonzero(iouP[iouP<=th])
         apFN = np.count_nonzero(iouGT[iouGT<=th])
-        ap = (apTP) / (apTP + apFN + apFP)
+        ap = 1.*(apTP) / (apTP + apFN + apFP)
         aps.append(ap)
         arrTmp.append(ap)
-        print("Average Precision: ", th, ap)
+        precision = 1.*(apTP) / len(pred_labelsT)
+        arrTmp.append(precision)
+        recall = 1.*(apTP) / len(gt_labelsT)
+        arrTmp.append(recall)
         outFl.write("Average Precision, th={}: {:.3f}\n".format(th, ap))
+        outFl.write("Precision, th={}: {:.3f}\n".format(th, precision))
+        outFl.write("Recall, th={}: {:.3f}\n".format(th, recall))
+        print("apTP %s apFN %s apFP %s" %(apTP,apFN,apFP))
+        print("Average Precision %.1f %.3f " % (th, ap))
+        print("Precision %.1f %.3f"%( th, precision))
+        print("Recall %.1f %.3f"%( th, recall))
 
     outFl.close()
 
