@@ -8,7 +8,7 @@ import tifffile
 import os
 import operator
 
-def evaluate_files(res_file, gt_file, foreground_only=False):
+def evaluate_files(res_file, gt_file, zero_is_background=True, foreground_only=False):
     if len(sys.argv) > 4:
         res_file = res_file.replace(".hdf", sys.argv[4] + ".hdf")
     print("loading", res_file, gt_file)
@@ -54,10 +54,6 @@ def evaluate_files(res_file, gt_file, foreground_only=False):
     conn_labels, conn_counts = np.unique(overlay,
                                          return_counts=True, axis=1)
     conn_labels = np.transpose(conn_labels)
-
-    zeroRow = np.invert(np.any(conn_labels==[0,0],axis=1))
-    conn_counts = conn_counts[zeroRow]
-    conn_labels = conn_labels[zeroRow]
 
     # get gt cell ids and the size of the corresponding cell
     gt_labelsT, gt_counts = np.unique(gt_labels, return_counts=True)
@@ -120,6 +116,16 @@ def evaluate_files(res_file, gt_file, foreground_only=False):
         iouP[u].append(iou)
         segP[u].append(seg)
         segP2[u].append(seg2)
+
+    if zero_is_background:
+        iouP.pop(0)
+        iouGT.pop(0)
+        diceP.pop(0)
+        diceGT.pop(0)
+        segP.pop(0)
+        segP2.pop(0)
+        segGT.pop(0)
+
     dice = 0
     cnt = 0
     for (k, vs) in diceGT.items():
