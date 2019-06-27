@@ -20,12 +20,33 @@ class Metrics:
         tomlFl = open(self.fn+".toml", 'w')
         toml.dump(self.metricsDict, tomlFl)
 
-    def addMetric(self, name, value):
+    def addTable(self, name, dct=None):
+        levels = name.split(".")
+        if dct is None:
+            dct = self.metricsDict
+        print(levels[0])
+        if levels[0] not in dct:
+            dct[levels[0]] = {}
+        if len(levels) > 1:
+            name = ".".join(levels[1:])
+            self.addTable(name, dct[levels[0]])
+
+    def getTable(self, name, dct=None):
+        levels = name.split(".")
+        if dct is None:
+            dct = self.metricsDict
+        if len(levels) == 1:
+            return dct[levels[0]]
+        else:
+            name = ".".join(levels[1:])
+            return self.getTable(name, dct=dct[levels[0]])
+
+    def addMetric(self, table, name, value):
         as_str = "{}: {}".format(name, value)
-        print(as_str)
         self.outFl.write(as_str+"\n")
         self.metricsArray.append(value)
-        self.metricsDict[name] = value
+        tbl = self.getTable(table)
+        tbl[name] = value
 
 
 def maybe_crop(pred_labels, gt_labels):
@@ -67,14 +88,14 @@ def maybe_crop(pred_labels, gt_labels):
 def evaluate_files(args, res_file, gt_file, background=0,
                    foreground_only=False):
     # TODO: maybe remove, should be superfluous with proper arg parsing
-    if args.resFileSuffix is not None:
-        res_file = res_file.replace(".hdf", args.resFileSuffix + ".hdf")
+    if args.res_file_suffix is not None:
+        res_file = res_file.replace(".hdf", args.res_file_suffix + ".hdf")
     print("loading", res_file, gt_file)
 
     # read preprocessed hdf file
     if res_file.endswith(".hdf"):
         with h5py.File(res_file, 'r') as f:
-            pred_labels= np.array(f[args.dataset])
+            pred_labels= np.array(f[args.res_key])
     # or read preprocessed tif files
     elif res_file.endswith(".tif") or res_file.endswith(".tiff") or \
          res_file.endswith(".TIF") or res_file.endswith(".TIFF"):
@@ -92,8 +113,8 @@ def evaluate_files(args, res_file, gt_file, background=0,
             # gt_labels = np.array(f['volumes/gt_labels'])
             # gt_labels = np.array(f['images/gt_instances'])
             try:
-                if args.gt_dataset is not None:
-                    gt_labels = np.array(f[args.gt_dataset])
+                if args.gt_key is not None:
+                    gt_labels = np.array(f[args.gt_key])
                 else:
                     gt_labels = np.array(f['images/gt_labels'])
             except:
@@ -117,9 +138,9 @@ def evaluate_files(args, res_file, gt_file, background=0,
 
     print("processing", res_file, gt_file)
     outFnBase = os.path.join(
-        args.outDir,
-        os.path.splitext(os.path.basename(args.resFile))[0] +
-        args.dataset.replace("/","_") + args.suffix)
+        args.out_dir,
+        os.path.splitext(os.path.basename(args.res_file))[0] +
+        args.res_key.replace("/","_") + args.suffix)
 
     overlay = np.array([pred_labels.flatten(),
                         gt_labels.flatten()])
@@ -329,26 +350,31 @@ def evaluate_files(args, res_file, gt_file, background=0,
         outFn = outFnBase + "_tif_scores.txt"
 
     metrics = Metrics(outFn)
-    metrics.addMetric("Num GT", len(gt_labels_list))
-    metrics.addMetric("Num Pred", len(pred_labels_list))
-    metrics.addMetric("GT/Ref -> Pred mean dice", diceGT)
-    metrics.addMetric("Pred -> GT/Ref mean dice", diceP)
-    metrics.addMetric("GT/Ref -> Pred mean iou", iouGTMn)
-    metrics.addMetric("Pred -> GT/Ref mean iou", iouPMn)
-    metrics.addMetric("GT/Ref -> Pred mean seg", segGT)
-    metrics.addMetric("Pred -> GT/Ref mean seg", segP)
-    metrics.addMetric("Pred -> GT/Ref mean seg rev", segPrev)
-    metrics.addMetric("Pred -> GT/Ref NS", ns)
-    metrics.addMetric("Pred -> GT/Ref FP", fp)
-    metrics.addMetric("Pred -> GT/Ref TP", tpP)
-    metrics.addMetric("GT/Ref -> Pred FN", fn)
-    metrics.addMetric("GT/Ref -> Pred TP", tpGT)
+    tblNameGen = "general"
+    metrics.addTable(tblNameGen)
+    metrics.addMetric(tblNameGen, "Num GT", len(gt_labels_list))
+    metrics.addMetric(tblNameGen, "Num Pred", len(pred_labels_list))
+    metrics.addMetric(tblNameGen, "GT/Ref -> Pred mean dice", diceGT)
+    metrics.addMetric(tblNameGen, "Pred -> GT/Ref mean dice", diceP)
+    metrics.addMetric(tblNameGen, "GT/Ref -> Pred mean iou", iouGTMn)
+    metrics.addMetric(tblNameGen, "Pred -> GT/Ref mean iou", iouPMn)
+    metrics.addMetric(tblNameGen, "GT/Ref -> Pred mean seg", segGT)
+    metrics.addMetric(tblNameGen, "Pred -> GT/Ref mean seg", segP)
+    metrics.addMetric(tblNameGen, "Pred -> GT/Ref mean seg rev", segPrev)
+    metrics.addMetric(tblNameGen, "Pred -> GT/Ref NS", ns)
+    metrics.addMetric(tblNameGen, "Pred -> GT/Ref FP", fp)
+    metrics.addMetric(tblNameGen, "Pred -> GT/Ref TP", tpP)
+    metrics.addMetric(tblNameGen, "GT/Ref -> Pred FN", fn)
+    metrics.addMetric(tblNameGen, "GT/Ref -> Pred TP", tpGT)
 
     ths = [0.5, 0.6, 0.7, 0.8, 0.9]
     ths.extend([0.5, 0.55, 0.6, 0.65, 0.7, 0.75, 0.8, 0.85, 0.9, 0.95])
     ths.extend([0.25, 0.3, 0.35, 0.4, 0.45, 0.5])
     aps = []
+    metrics.addTable("confusion_matrix")
     for th in ths:
+        tblname = "confusion_matrix.th_"+str(th).replace(".","_")
+        metrics.addTable(tblname)
         apTP = 0
         for pID in np.nonzero(iouP_2 > th)[0]:
             if len(iouP[iouIDs[pID]]) == 0:
@@ -357,23 +383,26 @@ def evaluate_files(args, res_file, gt_file, background=0,
                 apTP += 1
             elif len(iouP[iouIDs[pID]]) > 1 and iouP[iouIDs[pID]][1] < th:
                 apTP += 1
-        metrics.addMetric("apTP (iou {})".format(th), apTP)
+        # TODO: check, are both versions equal? which is correct
+        metrics.addMetric(tblname, "AP_TP", apTP)
         apTP = np.count_nonzero(iouP_2[iouP_2>th])
         apFP = np.count_nonzero(iouP_2[iouP_2<=th])
         apFN = np.count_nonzero(iouGT[iouGT<=th])
-        metrics.addMetric("apTP (iou {})".format(th), apTP)
-        metrics.addMetric("apFP (iou {})".format(th), apFP)
-        metrics.addMetric("apFN (iou {})".format(th), apFN)
+        metrics.addMetric(tblname, "AP_TP", apTP)
+        metrics.addMetric(tblname, "AP_FP", apFP)
+        metrics.addMetric(tblname, "AP_FN", apFN)
         ap = 1.*(apTP) / (apTP + apFN + apFP)
         aps.append(ap)
-        metrics.addMetric("AP (iou {})".format(th), ap)
+        metrics.addMetric(tblname, "AP", ap)
         precision = 1.*(apTP) / len(pred_labels_list)
-        metrics.addMetric("precision (iou {})".format(th), precision)
+        metrics.addMetric(tblname, "precision", precision)
         recall = 1.*(apTP) / len(gt_labels_list)
-        metrics.addMetric("recall (iou {})".format(th), recall)
+        metrics.addMetric(tblname, "recall", recall)
 
     avAP = np.mean(aps)
-    metrics.addMetric("avAP", avAP)
+    metrics.addMetric("confusion_matrix", "avAP", avAP)
+
+    return metrics.metricsDict
 
 
 if __name__ == "__main__":
