@@ -1,39 +1,93 @@
-from joblib import Parallel, delayed
-import argparse
 import sys
-import h5py
-import numpy as np
-import json
-import scipy.ndimage
-import tifffile
 import os
-import skimage.morphology
-import operator
 
-def evaluate_files(args, res_file, gt_file, zero_is_background=True, foreground_only=True):
+import h5py
+import argparse
+import numpy as np
+import tifffile
+import toml
+
+
+class Metrics:
+    def __init__(self, fn):
+        self.metricsDict = {}
+        self.metricsArray = []
+        self.fn = fn
+        self.outFl = open(self.fn+".txt", 'w')
+
+    def __del__(self):
+        self.outFl.close()
+        tomlFl = open(self.fn+".toml", 'w')
+        toml.dump(self.metricsDict, tomlFl)
+
+    def addMetric(self, name, value):
+        as_str = "{}: {}".format(name, value)
+        print(as_str)
+        self.outFl.write(as_str+"\n")
+        self.metricsArray.append(value)
+        self.metricsDict[name] = value
+
+
+def maybe_crop(pred_labels, gt_labels):
+    if gt_labels.shape == pred_labels.shape:
+        return pred_labels, gt_labels
+    if gt_labels.shape[0] > pred_labels.shape[0]:
+        bigger_arr = gt_labels
+        smaller_arr = pred_labels
+        swapped = False
+    else:
+        bigger_arr = pred_labels
+        smaller_arr = gt_labels
+        swapped = True
+    begin = (np.array(bigger_arr.shape) -
+             np.array(smaller_arr.shape)) // 2
+    end = np.array(bigger_arr.shape) - begin
+    if len(bigger_arr.shape) == 2:
+        bigger_arr = bigger_arr[begin[0]:end[0],
+                                begin[1]:end[1]]
+    else:
+        # TODO: check if necessary/correct
+        if (np.array(bigger_arr.shape) -
+            np.array(smaller_arr.shape))[2] % 2 == 1:
+            end[2] -= 1
+        bigger_arr = bigger_arr[begin[0]:end[0],
+                                begin[1]:end[1],
+                                begin[2]:end[2]]
+    if not swapped:
+        gt_labels = bigger_arr
+        pred_labels = smaller_arr
+    else:
+        pred_labels = bigger_arr_arr
+        gt_labels = smaller_arr
+    print("gt shape cropped", gt_labels.shape)
+    print("pred shape cropped", pred_labels.shape)
+
+    return pred_labels, gt_labels
+
+def evaluate_files(args, res_file, gt_file, background=0,
+                   foreground_only=False):
+    # TODO: maybe remove, should be superfluous with proper arg parsing
     if args.resFileSuffix is not None:
         res_file = res_file.replace(".hdf", args.resFileSuffix + ".hdf")
-    if args.older_than is not None and os.path.getmtime(res_file) >= args.older_than:
-        print("skipping", res_file, gt_file)
-        return
-    else:
-        print("loading", res_file, gt_file)
+    print("loading", res_file, gt_file)
+
     # read preprocessed hdf file
-    if "hdf" in res_file:
+    if res_file.endswith(".hdf"):
         with h5py.File(res_file, 'r') as f:
-            # pred_labels= np.array(f['volumes/'+sys.argv[3]])
-            # pred_labels= np.array(f['images/instances'])
             pred_labels= np.array(f[args.dataset])
     # or read preprocessed tif files
-    else:
+    elif res_file.endswith(".tif") or res_file.endswith(".tiff") or \
+         res_file.endswith(".TIF") or res_file.endswith(".TIFF"):
         pred_labels = tifffile.imread(res_file)
-    print(np.max(pred_labels), np.min(pred_labels), pred_labels.shape)
+    print("prediction max/min/shape", np.max(pred_labels),
+          np.min(pred_labels), pred_labels.shape)
+    # TODO: check if reshaping necessary
     if pred_labels.shape[0] == 1:
         pred_labels.shape = pred_labels.shape[1:]
-    print(pred_labels.shape)
+    print("prediction shape", pred_labels.shape)
 
     # read ground truth data
-    if "hdf" in gt_file:
+    if gt_file.endswith(".hdf"):
         with h5py.File(gt_file, 'r') as f:
             # gt_labels = np.array(f['volumes/gt_labels'])
             # gt_labels = np.array(f['images/gt_instances'])
@@ -44,83 +98,67 @@ def evaluate_files(args, res_file, gt_file, zero_is_background=True, foreground_
                     gt_labels = np.array(f['images/gt_labels'])
             except:
                 gt_labels = np.array(f['images/gt_instances'])
-    else:
+    elif gt_file.endswith(".tif") or gt_file.endswith(".tiff") or \
+         gt_file.endswith(".TIF") or gt_file.endswith(".TIFF"):
         gt_labels = tifffile.imread(gt_file)
-    print(np.max(gt_labels), np.min(gt_labels), gt_labels.shape)
+    print("gt max/min/shape", np.max(gt_labels), np.min(gt_labels),
+          gt_labels.shape)
+    # TODO: check if reshaping necessary
     if gt_labels.shape[0] == 1:
         gt_labels.shape = gt_labels.shape[1:]
-    print(gt_labels.shape)
     gt_labels = np.squeeze(gt_labels)
-    if gt_labels.shape[0] > pred_labels.shape[0]:
-        if gt_labels.shape != pred_labels.shape:
-            begin = (np.asarray(gt_labels.shape)-np.asarray(pred_labels.shape))//2
-            end = np.asarray(gt_labels.shape)-begin
-            print(begin, end)
-            if len(gt_labels.shape) == 2:
-                gt_labels = gt_labels[begin[0]:end[0],
-                                      begin[1]:end[1]]
-            else:
-                print(np.asarray(gt_labels.shape)-np.asarray(pred_labels.shape))
-                if (np.asarray(gt_labels.shape)-np.asarray(pred_labels.shape))[2] % 2 == 1:
-                    end[2] -= 1
-                gt_labels = gt_labels[begin[0]:end[0],
-                                      begin[1]:end[1],
-                                      begin[2]:end[2]]
-        print("gt", gt_labels.shape)
-    else:
-        if gt_labels.shape != pred_labels.shape:
-            begin = (np.asarray(pred_labels.shape)-np.asarray(gt_labels.shape))//2
-            end = np.asarray(pred_labels.shape)-begin
-            print(begin, end)
-            if len(pred_labels.shape) == 2:
-                pred_labels = pred_labels[begin[0]:end[0],
-                                          begin[1]:end[1]]
-            else:
-                print(np.asarray(pred_labels.shape)-np.asarray(gt_labels.shape))
-                if (np.asarray(pred_labels.shape)-np.asarray(gt_labels.shape))[2] % 2 == 1:
-                    end[2] -= 1
-                pred_labels = pred_labels[begin[0]:end[0],
-                                          begin[1]:end[1],
-                                          begin[2]:end[2]]
-        print("pred", pred_labels.shape)
+    print("gt shape", gt_labels.shape)
 
+    # TODO: check if necessary
+    pred_labels, gt_labels = maybe_crop(pred_labels, gt_labels)
 
     if foreground_only:
         pred_labels[gt_labels==0] = 0
 
     print("processing", res_file, gt_file)
+    outFnBase = os.path.join(
+        args.outDir,
+        os.path.splitext(os.path.basename(args.resFile))[0] +
+        args.dataset.replace("/","_") + args.suffix)
+
     overlay = np.array([pred_labels.flatten(),
                         gt_labels.flatten()])
-    print(overlay.shape)
+    print("overlay shape", overlay.shape)
     # get overlaying cells and the size of the overlap
-    conn_labels, conn_counts = np.unique(overlay,
+    overlay_labels, overlay_labels_counts = np.unique(overlay,
                                          return_counts=True, axis=1)
-    conn_labels = np.transpose(conn_labels)
+    overlay_labels = np.transpose(overlay_labels)
 
     # get gt cell ids and the size of the corresponding cell
-    gt_labelsT, gt_counts = np.unique(gt_labels, return_counts=True)
+    gt_labels_list, gt_counts = np.unique(gt_labels, return_counts=True)
+    gt_labels_count_dict = {}
+    for (l,c) in zip(gt_labels_list, gt_counts):
+        gt_labels_count_dict[l] = c
+
     # get pred cell ids
-    gt_labelsD = {}
-    for (l,c) in zip(gt_labelsT, gt_counts):
-        gt_labelsD[l] = c
-    pred_labelsT, pred_counts = np.unique(pred_labels, return_counts=True)
-    pred_labelsD = {}
-    for (l,c) in zip(pred_labelsT, pred_counts):
-        pred_labelsD[l] = c
+    pred_labels_list, pred_counts = np.unique(pred_labels, return_counts=True)
+    pred_labels_count_dict = {}
+    for (l,c) in zip(pred_labels_list, pred_counts):
+        pred_labels_count_dict[l] = c
+
     # identify overlaying cells where more than 50% of gt cell is covered
-    conn = np.asarray([c > 0.5 * float(gt_counts[gt_labelsT == v])
-        for (u,v), c in zip(conn_labels, conn_counts)], dtype=np.bool)
+    matchesSEG = np.asarray([c > 0.5 * float(gt_counts[gt_labels_list == v])
+        for (u,v), c in zip(overlay_labels, overlay_labels_counts)],
+                            dtype=np.bool)
 
     # get their ids
-    conn_labelsT = conn_labels[conn]
+    matches_labels = overlay_labels[matchesSEG]
+
     # remove background
-    pred_labelsT = pred_labelsT[pred_labelsT > 0]
-    gt_labelsT = gt_labelsT[gt_labelsT > 0]
-    con_mat = np.zeros((len(pred_labelsT), len(gt_labelsT)))
-    for (u,v) in conn_labelsT:
+    if background is not None:
+        pred_labels_list = pred_labels_list[pred_labels_list != background]
+        gt_labels_list = gt_labels_list[gt_labels_list != background]
+
+    matches_mat = np.zeros((len(pred_labels_list), len(gt_labels_list)))
+    for (u, v) in matches_labels:
         if u > 0 and v > 0:
-            con_mat[np.where(pred_labelsT == u),
-                    np.where(gt_labelsT == v)] = 1
+            matches_mat[np.where(pred_labels_list == u),
+                        np.where(gt_labels_list == v)] = 1
 
     diceGT = {}
     iouGT = {}
@@ -128,16 +166,18 @@ def evaluate_files(args, res_file, gt_file, zero_is_background=True, foreground_
     diceP = {}
     iouP = {}
     segP = {}
-    segP2 = {}
-    for (u,v), c in zip(conn_labels, conn_counts):
-        dice = 2.*c/(gt_labelsD[v]+pred_labelsD[u])
-        iou = 1.*c/(gt_labelsD[v]+pred_labelsD[u]-c)
-        # print("c %s gt_label %s num %s pred_label %s num %s dice %s iou %s" %(c,v,gt_labelsD[v],u,pred_labelsD[u],dice,iou))
-        if c > 0.5 * gt_labelsD[v]:
+    segPrev = {}
+    for (u,v), c in zip(overlay_labels, overlay_labels_counts):
+        dice = 2.0 * c / (gt_labels_count_dict[v] + pred_labels_count_dict[u])
+        iou = c / (gt_labels_count_dict[v] + pred_labels_count_dict[u] - c)
+
+        # print("c %s gt_label %s num %s pred_label %s num %s dice %s iou %s"
+        # %(c,v,gt_labels_count_dict[v],u,pred_labels_count_dict[u],dice,iou))
+        if c > 0.5 * gt_labels_count_dict[v]:
             seg = iou
         else:
             seg = 0
-        if c > 0.5 * pred_labelsD[u]:
+        if c > 0.5 * pred_labels_count_dict[u]:
             seg2 = iou
         else:
             seg2 = 0
@@ -150,23 +190,23 @@ def evaluate_files(args, res_file, gt_file, zero_is_background=True, foreground_
             diceP[u] = []
             iouP[u] = []
             segP[u] = []
-            segP2[u] = []
+            segPrev[u] = []
         diceGT[v].append(dice)
         iouGT[v].append(iou)
         segGT[v].append(seg)
         diceP[u].append(dice)
         iouP[u].append(iou)
         segP[u].append(seg)
-        segP2[u].append(seg2)
+        segPrev[u].append(seg2)
 
-    if zero_is_background:
-        iouP.pop(0)
-        iouGT.pop(0)
-        diceP.pop(0)
-        diceGT.pop(0)
-        segP.pop(0)
-        segP2.pop(0)
-        segGT.pop(0)
+    if background is not None:
+        iouP.pop(background)
+        iouGT.pop(background)
+        diceP.pop(background)
+        diceGT.pop(background)
+        segP.pop(background)
+        segPrev.pop(background)
+        segGT.pop(background)
 
     dice = 0
     cnt = 0
@@ -175,6 +215,7 @@ def evaluate_files(args, res_file, gt_file, zero_is_background=True, foreground_
         dice += vs[0]
         cnt += 1
     diceGT = dice/cnt
+
     dice = 0
     cnt = 0
     for (k, vs) in diceP.items():
@@ -191,7 +232,8 @@ def evaluate_files(args, res_file, gt_file, zero_is_background=True, foreground_
         instances[instances==k] = vs[0]
     iouGT = np.array(iou)
     iouGTMn = np.mean(iouGT)
-    with h5py.File(args.outDir + "/" + os.path.basename(args.resFile[:-4]) + args.dataset.replace("/","_") + args.suffix+"GT.hdf", 'w') as fi:
+    if args.debug:
+        with h5py.File(outFnBase + "GT.hdf", 'w') as fi:
             fi.create_dataset(
                 'images/instances',
                 data = instances,
@@ -199,6 +241,7 @@ def evaluate_files(args, res_file, gt_file, zero_is_background=True, foreground_
             for dataset in ['images/instances']:
                 fi[dataset].attrs['offset'] = (0, 0)
                 fi[dataset].attrs['resolution'] = (1, 1)
+
     iou = []
     iouIDs = []
     instances = pred_labels.copy().astype(np.float32)
@@ -208,7 +251,8 @@ def evaluate_files(args, res_file, gt_file, zero_is_background=True, foreground_
         iouP[k] = vs
         iouIDs.append(k)
         instances[instances==k] = vs[0]
-    with h5py.File(args.outDir + "/" + os.path.basename(args.resFile[:-4]) + args.dataset.replace("/","_") + args.suffix+"P.hdf", 'w') as fi:
+    if args.debug:
+        with h5py.File(outFnBase + "P.hdf", 'w') as fi:
             fi.create_dataset(
                 'images/instances',
                 data = instances,
@@ -216,6 +260,7 @@ def evaluate_files(args, res_file, gt_file, zero_is_background=True, foreground_
             for dataset in ['images/instances']:
                 fi[dataset].attrs['offset'] = (0, 0)
                 fi[dataset].attrs['resolution'] = (1, 1)
+
     iouP_2 = np.array(iou)
     iouIDs = np.array(iouIDs)
     iouPMn = np.mean(iouP_2)
@@ -227,6 +272,7 @@ def evaluate_files(args, res_file, gt_file, zero_is_background=True, foreground_
         seg += vs[0]
         cnt += 1
     segGT = seg/cnt
+
     seg = 0
     cnt = 0
     for (k, vs) in segP.items():
@@ -234,191 +280,101 @@ def evaluate_files(args, res_file, gt_file, zero_is_background=True, foreground_
         seg += vs[0]
         cnt += 1
     segP = seg/cnt
+
     seg = 0
     cnt = 0
-    for (k, vs) in segP2.items():
+    for (k, vs) in segPrev.items():
         vs = sorted(vs, reverse=True)
         seg += vs[0]
         cnt += 1
-    segP2 = seg/cnt
+    segPrev = seg/cnt
 
     # non-split vertices num non-empty cols - num non-empty rows
     # (more than one entry in col: predicted cell with more than one
     # ground truth cell assigned)
     # (other way around not possible due to 50% rule)
-    ns = np.sum(np.count_nonzero(con_mat, axis=0)) \
-            - np.sum(np.count_nonzero(con_mat, axis=1)>0)
+    ns = np.sum(np.count_nonzero(matches_mat, axis=0)) \
+            - np.sum(np.count_nonzero(matches_mat, axis=1) > 0)
     ns = int(ns)
 
     # false negative: empty cols
     # (no predicted cell for ground truth cell)
-    fn = np.sum(np.sum(con_mat, axis=0)==0)
-    # tmp = np.sum(con_mat, axis=0)==0
+    fn = np.sum(np.sum(matches_mat, axis=0) == 0)
+    # tmp = np.sum(matches_mat, axis=0)==0
     # for i in range(len(tmp)):
-    #     print(i, tmp[i], gt_labelsT[i])
+    #     print(i, tmp[i], gt_labels_list[i])
     fn = int(fn)
 
     # false positive: empty rows
     # (predicted cell for non existing ground truth cell)
-    fp = np.sum(np.sum(con_mat, axis=1)==0)
-    # tmp = np.sum(con_mat, axis=1)==0
+    fp = np.sum(np.sum(matches_mat, axis=1) == 0)
+    # tmp = np.sum(matches_mat, axis=1)==0
     # for i in range(len(tmp)):
-    #     print(i, tmp[i], pred_labelsT[i])
-    # print(np.sum(con_mat, axis=1)==0)
+    #     print(i, tmp[i], pred_labels_list[i])
+    # print(np.sum(matches_mat, axis=1)==0)
     fp = int(fp)
 
     # true positive: row with single entry (can be 0, 1, or more)
-    tpP = np.sum(np.sum(con_mat, axis=1)==1)
+    tpP = np.sum(np.sum(matches_mat, axis=1) == 1)
     tpP = int(tpP)
 
     # true positive: non-empty col (can only be 0 or 1)
-    tpGT = np.sum(np.sum(con_mat, axis=0)>0)
+    tpGT = np.sum(np.sum(matches_mat, axis=0) > 0)
     tpGT = int(tpGT)
 
-    arrTmp = []
-    if "hdf" in res_file:
-        outFn = args.outDir + "/" + os.path.basename(args.resFile[:-4]) + args.dataset.replace("/","_") + args.suffix + "_hdf_scores.txt"
+    metrics = {}
+    if res_file.endswith(".hdf"):
+        outFn = outFnBase + "_hdf_scores.txt"
     else:
-        outFn = args.outDir + "/" + os.path.basename(args.resFile[:-4]) + "_tif_scores.txt"
-    outFl = open(outFn, 'w')
-    print("Num GT: ", len(gt_labelsT))
-    arrTmp.append(len(gt_labelsT))
-    outFl.write("Num GT: {}\n".format(len(gt_labelsT)))
-    print("Num Pred:", len(pred_labelsT))
-    arrTmp.append(len(pred_labelsT))
-    outFl.write("Num Pred: {}\n".format(len(pred_labelsT)))
-    print("GT/Ref -> Pred mean dice", diceGT)
-    arrTmp.append(diceGT)
-    outFl.write("GT/Ref -> Pred mean dice: {:.3f}\n".format(diceGT))
-    print("Pred -> GT/Ref mean dice", diceP)
-    arrTmp.append(diceP)
-    outFl.write("Pred -> GT/Ref mean dice: {:.3f}\n".format(diceP))
-    print("GT/Ref -> Pred mean iou", iouGTMn)
-    arrTmp.append(iouGTMn)
-    outFl.write("GT/Ref -> Pred mean iou: {:.3f}\n".format(iouGTMn))
-    print("Pred -> GT/Ref mean iou", iouPMn)
-    arrTmp.append(iouPMn)
-    outFl.write("Pred -> GT/Ref mean iou: {:.3f}\n".format(iouPMn))
-    print("GT/Ref -> Pred mean seg", segGT)
-    arrTmp.append(segGT)
-    outFl.write("GT/Ref -> Pred mean seg: {:.3f}\n".format(segGT))
-    print("Pred -> GT/Ref mean seg", segP)
-    arrTmp.append(segP)
-    outFl.write("Pred -> GT/Ref mean seg: {:.3f}\n".format(segP))
-    print("Pred -> GT/Ref mean rev seg", segP2)
-    arrTmp.append(segP2)
-    outFl.write("Pred -> GT/Ref mean rev seg: {:.3f}\n".format(segP2))
+        outFn = outFnBase + "_tif_scores.txt"
 
-    print("Pred -> GT/Ref NS", ns)
-    arrTmp.append(ns)
-    outFl.write("Pred -> GT/Ref NS: {}\n".format(ns))
-    print("Pred -> GT/Ref FP", fp)
-    arrTmp.append(fp)
-    outFl.write("Pred -> GT/Ref FP: {}\n".format(fp))
-    print("Pred -> GT/Ref TP", tpP)
-    arrTmp.append(tpP)
-    outFl.write("Pred -> GT/REf TP: {}\n".format(tpP))
-    print("GT/Ref -> Pred FN", fn)
-    arrTmp.append(fn)
-    outFl.write("GT/Ref -> Pred FN: {}\n".format(fn))
-    print("GT/Ref -> Pred TP", tpGT)
-    arrTmp.append(tpGT)
-    outFl.write("GT/Ref -> Pred TP: {}\n".format(tpGT))
+    metrics = Metrics(outFn)
+    metrics.addMetric("Num GT", len(gt_labels_list))
+    metrics.addMetric("Num Pred", len(pred_labels_list))
+    metrics.addMetric("GT/Ref -> Pred mean dice", diceGT)
+    metrics.addMetric("Pred -> GT/Ref mean dice", diceP)
+    metrics.addMetric("GT/Ref -> Pred mean iou", iouGTMn)
+    metrics.addMetric("Pred -> GT/Ref mean iou", iouPMn)
+    metrics.addMetric("GT/Ref -> Pred mean seg", segGT)
+    metrics.addMetric("Pred -> GT/Ref mean seg", segP)
+    metrics.addMetric("Pred -> GT/Ref mean seg rev", segPrev)
+    metrics.addMetric("Pred -> GT/Ref NS", ns)
+    metrics.addMetric("Pred -> GT/Ref FP", fp)
+    metrics.addMetric("Pred -> GT/Ref TP", tpP)
+    metrics.addMetric("GT/Ref -> Pred FN", fn)
+    metrics.addMetric("GT/Ref -> Pred TP", tpGT)
 
     ths = [0.5, 0.6, 0.7, 0.8, 0.9]
+    ths.extend([0.5, 0.55, 0.6, 0.65, 0.7, 0.75, 0.8, 0.85, 0.9, 0.95])
+    ths.extend([0.25, 0.3, 0.35, 0.4, 0.45, 0.5])
     aps = []
-    for th in ths:
-        apTP = np.count_nonzero(iouP_2[iouP_2>th])
-        apFP = np.count_nonzero(iouP_2[iouP_2<=th])
-        apFN = np.count_nonzero(iouGT[iouGT<=th])
-        arrTmp.append(apTP)
-        arrTmp.append(apFP)
-        arrTmp.append(apFN)
-        ap = 1.*(apTP) / (apTP + apFN + apFP)
-        aps.append(ap)
-        arrTmp.append(ap)
-        precision = 1.*(apTP) / len(pred_labelsT)
-        arrTmp.append(precision)
-        recall = 1.*(apTP) / len(gt_labelsT)
-        arrTmp.append(recall)
-        outFl.write("apTP %s apFN %s apFP %s\n" %(apTP,apFN,apFP))
-        outFl.write("Average Precision, th={}: {:.3f}\n".format(th, ap))
-        outFl.write("Precision, th={}: {:.3f}\n".format(th, precision))
-        outFl.write("Recall, th={}: {:.3f}\n".format(th, recall))
-        print("apTP %s apFN %s apFP %s" %(apTP,apFN,apFP))
-        print("Average Precision %.1f %.3f " % (th, ap))
-        print("Precision %.1f %.3f"%( th, precision))
-        print("Recall %.1f %.3f"%( th, recall))
-
-
-    ths = [0.5, 0.55, 0.6, 0.65, 0.7, 0.75, 0.8, 0.85, 0.9, 0.95]
-    aps = []
-    for th in ths:
-        apTP = np.count_nonzero(iouP_2[iouP_2>=th])
-        apFP = np.count_nonzero(iouP_2[iouP_2<th])
-        apFN = np.count_nonzero(iouGT[iouGT<th])
-        ap = 1.*(apTP) / (apTP + apFN + apFP)
-        aps.append(ap)
-        # arrTmp.append(ap)
-        # precision = 1.*(apTP) / len(pred_labelsT)
-        # arrTmp.append(precision)
-        # recall = 1.*(apTP) / len(gt_labelsT)
-        # arrTmp.append(recall)
-        # # outFl.write("Average Precision, th={}: {:.3f}\n".format(th, ap))
-        # # outFl.write("Precision, th={}: {:.3f}\n".format(th, precision))
-        # # outFl.write("Recall, th={}: {:.3f}\n".format(th, recall))
-        # print("apTP %s apFN %s apFP %s" %(apTP,apFN,apFP))
-        # print("Average Precision %.2f %.3f " % (th, ap))
-        # print("Precision %.2f %.3f"%( th, precision))
-        # print("Recall %.2f %.3f"%( th, recall))
-
-    ths = [0.25, 0.3, 0.35, 0.4, 0.45, 0.5]
-    # ths = [0.5]
     for th in ths:
         apTP = 0
-        for pID in np.nonzero(iouP_2>th)[0]:
-            # print(iouP[iouIDs[pID]])
+        for pID in np.nonzero(iouP_2 > th)[0]:
             if len(iouP[iouIDs[pID]]) == 0:
                 pass
             elif len(iouP[iouIDs[pID]]) == 1:
                 apTP += 1
             elif len(iouP[iouIDs[pID]]) > 1 and iouP[iouIDs[pID]][1] < th:
                 apTP += 1
-        # apTP = np.count_nonzero(iouP_2[iouP_2>th])
+        metrics.addMetric("apTP (iou {})".format(th), apTP)
+        apTP = np.count_nonzero(iouP_2[iouP_2>th])
         apFP = np.count_nonzero(iouP_2[iouP_2<=th])
         apFN = np.count_nonzero(iouGT[iouGT<=th])
+        metrics.addMetric("apTP (iou {})".format(th), apTP)
+        metrics.addMetric("apFP (iou {})".format(th), apFP)
+        metrics.addMetric("apFN (iou {})".format(th), apFN)
         ap = 1.*(apTP) / (apTP + apFN + apFP)
-        # aps.append(ap)
-        arrTmp.append(ap)
-        precision = 1.*(apTP) / len(pred_labelsT)
-        arrTmp.append(precision)
-        recall = 1.*(apTP) / len(gt_labelsT)
-        arrTmp.append(recall)
-        outFl.write("apTP {} apFN {} apFP {}".format(apTP,apFN,apFP))
-        outFl.write("Average Precision, th={}: {:.3f}\n".format(th, ap))
-        outFl.write("Precision, th={}: {:.3f}\n".format(th, precision))
-        outFl.write("Recall, th={}: {:.3f}\n".format(th, recall))
-        print("apTP %s apFN %s apFP %s" %(apTP,apFN,apFP))
-        print("Average Precision %.2f %.3f " % (th, ap))
-        print("Precision %.2f %.3f"%( th, precision))
-        print("Recall %.2f %.3f"%( th, recall))
+        aps.append(ap)
+        metrics.addMetric("AP (iou {})".format(th), ap)
+        precision = 1.*(apTP) / len(pred_labels_list)
+        metrics.addMetric("precision (iou {})".format(th), precision)
+        recall = 1.*(apTP) / len(gt_labels_list)
+        metrics.addMetric("recall (iou {})".format(th), recall)
 
-    outFl.close()
     avAP = np.mean(aps)
-    arrTmp.append(avAP)
-    print("Average of AP {}".format(avAP))
-    outFl.close()
+    metrics.addMetric("avAP", avAP)
 
-    if "hdf" in res_file:
-        outFn = args.outDir + "/" + os.path.basename(args.resFile[:-4]) + args.dataset.replace("/","_") + args.suffix + "_hdf_scores.csv"
-    else:
-        outFn = args.outDir + "/" + os.path.basename(args.resFile[:-4]) + "_tif_scores.csv"
-    with open(outFn, 'w') as outFl:
-        for arr in arrTmp:
-            if isinstance(arr, int):
-                outFl.write("{}, ".format(arr))
-            else:
-                outFl.write("{:.3f}, ".format(arr))
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
@@ -435,11 +391,12 @@ if __name__ == "__main__":
     parser.add_argument('--outDir', type=str,
                         help='outdir', required=True)
     parser.add_argument('--suffix', type=str,
-                        help='path to gtFile', default="")
+                        help='suffix', default="")
     parser.add_argument("--use_gt_fg", help="",
                     action="store_true")
-    parser.add_argument('--older_than', type=int,
-                        help='for debug, use files modified before time point, in sec epoch')
+    parser.add_argument("--debug", help="",
+                    action="store_true")
+
     args = parser.parse_args()
     res_file = args.resFile
     gt_file = args.gtFile
