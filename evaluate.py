@@ -378,31 +378,33 @@ def evaluate_files(args, res_file, gt_file, background=0,
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument('--resFile', type=str,
-                        help='path to resFile', required=True)
-    parser.add_argument('--resFileSuffix', type=str,
-                        help='resFile suffix')
-    parser.add_argument('--gtFile', type=str,
-                        help='path to gtFile', required=True)
-    parser.add_argument('--dataset', type=str,
-                        help='name labeling dataset', required=True)
-    parser.add_argument('--gt_dataset', type=str,
-                        help='name gt dataset', required=True)
-    parser.add_argument('--outDir', type=str,
-                        help='outdir', required=True)
+    parser.add_argument('--res_file', type=str,
+                        help='path to res_file', required=True)
+    parser.add_argument('--res_file_suffix', type=str,
+                        help='res_file suffix')
+    parser.add_argument('--res_key', type=str,
+                        help='name labeling hdf key')
+    parser.add_argument('--gt_file', type=str,
+                        help='path to gt_file', required=True)
+    parser.add_argument('--gt_key', type=str,
+                        help='name gt hdf key')
+    parser.add_argument('--out_dir', type=str,
+                        help='output directory', required=True)
     parser.add_argument('--suffix', type=str,
                         help='suffix', default="")
+    parser.add_argument('--background', type=int,
+                        help='label for background (use -1 for None)',
+                        default="0")
     parser.add_argument("--use_gt_fg", help="",
                     action="store_true")
     parser.add_argument("--debug", help="",
                     action="store_true")
 
-    args = parser.parse_args()
-    res_file = args.resFile
-    gt_file = args.gtFile
     print(sys.argv)
+    args = parser.parse_args()
     if args.use_gt_fg:
         print("using gt foreground")
-        evaluate_files(args, res_file, gt_file, foreground_only=True)
-    else:
-        evaluate_files(args, res_file, gt_file, foreground_only=False)
+
+    evaluate_files(args, args.res_file, args.gt_file,
+                   foreground_only=args.use_gt_fg,
+                   background=args.background)
