@@ -128,6 +128,8 @@ def evaluate_files(args, res_file, gt_file, background=0,
     if gt_labels.shape[0] == 1:
         gt_labels.shape = gt_labels.shape[1:]
     gt_labels = np.squeeze(gt_labels)
+    if gt_labels.ndim > pred_labels.ndim:
+        gt_labels = np.max(gt_labels, axis=0)
     print("gt shape", gt_labels.shape)
 
     # TODO: check if necessary
@@ -398,6 +400,11 @@ def evaluate_files(args, res_file, gt_file, background=0,
         metrics.addMetric(tblname, "precision", precision)
         recall = 1.*(apTP) / len(gt_labels_list)
         metrics.addMetric(tblname, "recall", recall)
+        if (precision + recall) > 0:
+            fscore = (2. * precision * recall) / (precision + recall)
+        else:
+            fscore = 0.0
+        metrics.addMetric(tblname, 'fscore', fscore)
 
     avAP = np.mean(aps)
     metrics.addMetric("confusion_matrix", "avAP", avAP)
