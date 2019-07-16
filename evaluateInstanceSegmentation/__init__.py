@@ -1,1 +1,1 @@
-from .evaluate import evaluate_files
+from .evaluate import evaluate_file

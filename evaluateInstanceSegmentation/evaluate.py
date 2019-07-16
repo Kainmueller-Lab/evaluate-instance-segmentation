@@ -1,11 +1,14 @@
-import sys
+import logging
 import os
+import sys
 
 import h5py
 import argparse
 import numpy as np
 import tifffile
 import toml
+
+logger = logging.getLogger(__name__)
 
 
 class Metrics:
@@ -78,28 +81,30 @@ def maybe_crop(pred_labels, gt_labels):
         gt_labels = bigger_arr
         pred_labels = smaller_arr
     else:
-        pred_labels = bigger_arr_arr
+        pred_labels = bigger_arr
         gt_labels = smaller_arr
     print("gt shape cropped", gt_labels.shape)
     print("pred shape cropped", pred_labels.shape)
 
     return pred_labels, gt_labels
 
-def evaluate_files(args, res_file, gt_file, background=0,
-                   foreground_only=False):
+def evaluate_file(res_file, gt_file, background=0,
+                  foreground_only=False, **kwargs):
     # TODO: maybe remove, should be superfluous with proper arg parsing
-    if args.res_file_suffix is not None:
-        res_file = res_file.replace(".hdf", args.res_file_suffix + ".hdf")
+    if 'res_file_suffix' in kwargs:
+        res_file = res_file.replace(".hdf", kwargs['res_file_suffix'] + ".hdf")
     print("loading", res_file, gt_file)
 
     # read preprocessed hdf file
     if res_file.endswith(".hdf"):
         with h5py.File(res_file, 'r') as f:
-            pred_labels= np.array(f[args.res_key])
+            pred_labels= np.array(f[kwargs['res_key']])
     # or read preprocessed tif files
     elif res_file.endswith(".tif") or res_file.endswith(".tiff") or \
          res_file.endswith(".TIF") or res_file.endswith(".TIFF"):
         pred_labels = tifffile.imread(res_file)
+    else:
+        raise NotImplementedError("invalid file format %s", res_file)
     print("prediction max/min/shape", np.max(pred_labels),
           np.min(pred_labels), pred_labels.shape)
     # TODO: check if reshaping necessary
@@ -112,16 +117,12 @@ def evaluate_files(args, res_file, gt_file, background=0,
         with h5py.File(gt_file, 'r') as f:
             # gt_labels = np.array(f['volumes/gt_labels'])
             # gt_labels = np.array(f['images/gt_instances'])
-            try:
-                if args.gt_key is not None:
-                    gt_labels = np.array(f[args.gt_key])
-                else:
-                    gt_labels = np.array(f['images/gt_labels'])
-            except:
-                gt_labels = np.array(f['images/gt_instances'])
+            gt_labels = np.array(f[kwargs['gt_key']])
     elif gt_file.endswith(".tif") or gt_file.endswith(".tiff") or \
          gt_file.endswith(".TIF") or gt_file.endswith(".TIFF"):
         gt_labels = tifffile.imread(gt_file)
+    else:
+        raise NotImplementedError("invalid file format %s", gt_file)
     print("gt max/min/shape", np.max(gt_labels), np.min(gt_labels),
           gt_labels.shape)
     # TODO: check if reshaping necessary
@@ -140,9 +141,9 @@ def evaluate_files(args, res_file, gt_file, background=0,
 
     print("processing", res_file, gt_file)
     outFnBase = os.path.join(
-        args.out_dir,
-        os.path.splitext(os.path.basename(args.res_file))[0] +
-        args.res_key.replace("/","_") + args.suffix)
+        kwargs['out_dir'],
+        os.path.splitext(os.path.basename(res_file))[0] +
+        kwargs['res_key'].replace("/","_") + kwargs['suffix'])
 
     overlay = np.array([pred_labels.flatten(),
                         gt_labels.flatten()])
@@ -231,6 +232,13 @@ def evaluate_files(args, res_file, gt_file, background=0,
         segPrev.pop(background)
         segGT.pop(background)
 
+    if not diceGT:
+        logger.error("No labels found in gt image")
+        return
+    if not diceP:
+        logger.error("No labels found in pred image")
+        return
+
     dice = 0
     cnt = 0
     for (k, vs) in diceGT.items():
@@ -255,7 +263,7 @@ def evaluate_files(args, res_file, gt_file, background=0,
         instances[instances==k] = vs[0]
     iouGT = np.array(iou)
     iouGTMn = np.mean(iouGT)
-    if args.debug:
+    if kwargs['debug']:
         with h5py.File(outFnBase + "GT.hdf", 'w') as fi:
             fi.create_dataset(
                 'images/instances',
@@ -274,7 +282,7 @@ def evaluate_files(args, res_file, gt_file, background=0,
         iouP[k] = vs
         iouIDs.append(k)
         instances[instances==k] = vs[0]
-    if args.debug:
+    if kwargs['debug']:
         with h5py.File(outFnBase + "P.hdf", 'w') as fi:
             fi.create_dataset(
                 'images/instances',
@@ -441,6 +449,8 @@ if __name__ == "__main__":
     if args.use_gt_fg:
         print("using gt foreground")
 
-    evaluate_files(args, args.res_file, args.gt_file,
-                   foreground_only=args.use_gt_fg,
-                   background=args.background)
+    evaluate_file(args.res_file, args.gt_file,
+                  foreground_only=args.use_gt_fg,
+                  background=args.background, res_key=args.res_key,
+                  gt_key=args.gt_key, out_dir=args.out_dir, suffix=args.suffix,
+                  debug=args.debug)
