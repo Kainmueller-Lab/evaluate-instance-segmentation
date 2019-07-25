@@ -1,3 +1,4 @@
+import glob
 import logging
 import os
 import sys
@@ -7,6 +8,7 @@ import argparse
 import numpy as np
 import tifffile
 import toml
+import zarr
 
 logger = logging.getLogger(__name__)
 
@@ -27,7 +29,6 @@ class Metrics:
         levels = name.split(".")
         if dct is None:
             dct = self.metricsDict
-        print(levels[0])
         if levels[0] not in dct:
             dct[levels[0]] = {}
         if len(levels) > 1:
@@ -83,8 +84,8 @@ def maybe_crop(pred_labels, gt_labels):
     else:
         pred_labels = bigger_arr
         gt_labels = smaller_arr
-    print("gt shape cropped", gt_labels.shape)
-    print("pred shape cropped", pred_labels.shape)
+    logger.debug("gt shape cropped %s", gt_labels.shape)
+    logger.debug("pred shape cropped %s", pred_labels.shape)
 
     return pred_labels, gt_labels
 
@@ -93,7 +94,7 @@ def evaluate_file(res_file, gt_file, background=0,
     # TODO: maybe remove, should be superfluous with proper arg parsing
     if 'res_file_suffix' in kwargs:
         res_file = res_file.replace(".hdf", kwargs['res_file_suffix'] + ".hdf")
-    print("loading", res_file, gt_file)
+    logger.info("loading %s %s", res_file, gt_file)
 
     # read preprocessed hdf file
     if res_file.endswith(".hdf"):
@@ -105,12 +106,12 @@ def evaluate_file(res_file, gt_file, background=0,
         pred_labels = tifffile.imread(res_file)
     else:
         raise NotImplementedError("invalid file format %s", res_file)
-    print("prediction max/min/shape", np.max(pred_labels),
-          np.min(pred_labels), pred_labels.shape)
+    logger.debug("prediction min %f, max %f, shape %s", np.min(pred_labels),
+                 np.max(pred_labels), pred_labels.shape)
     # TODO: check if reshaping necessary
     if pred_labels.shape[0] == 1:
         pred_labels.shape = pred_labels.shape[1:]
-    print("prediction shape", pred_labels.shape)
+    logger.debug("prediction shape %s", pred_labels.shape)
 
     # read ground truth data
     if gt_file.endswith(".hdf"):
@@ -121,17 +122,20 @@ def evaluate_file(res_file, gt_file, background=0,
     elif gt_file.endswith(".tif") or gt_file.endswith(".tiff") or \
          gt_file.endswith(".TIF") or gt_file.endswith(".TIFF"):
         gt_labels = tifffile.imread(gt_file)
+    elif gt_file.endswith(".zarr"):
+        gt = zarr.open(gt_file, 'r')
+        gt_labels = np.array(gt[kwargs['gt_key']])
     else:
         raise NotImplementedError("invalid file format %s", gt_file)
-    print("gt max/min/shape", np.max(gt_labels), np.min(gt_labels),
-          gt_labels.shape)
+    logger.debug("gt min %f, max %f, shape %s", np.min(gt_labels),
+                 np.max(gt_labels), gt_labels.shape)
     # TODO: check if reshaping necessary
     if gt_labels.shape[0] == 1:
         gt_labels.shape = gt_labels.shape[1:]
     gt_labels = np.squeeze(gt_labels)
     if gt_labels.ndim > pred_labels.ndim:
         gt_labels = np.max(gt_labels, axis=0)
-    print("gt shape", gt_labels.shape)
+    logger.debug("gt shape %s", gt_labels.shape)
 
     # TODO: check if necessary
     pred_labels, gt_labels = maybe_crop(pred_labels, gt_labels)
@@ -139,15 +143,18 @@ def evaluate_file(res_file, gt_file, background=0,
     if foreground_only:
         pred_labels[gt_labels==0] = 0
 
-    print("processing", res_file, gt_file)
+    logger.info("processing %s %s", res_file, gt_file)
     outFnBase = os.path.join(
         kwargs['out_dir'],
         os.path.splitext(os.path.basename(res_file))[0] +
         kwargs['res_key'].replace("/","_") + kwargs['suffix'])
+    if len(glob.glob(outFnBase + "*")) > 0:
+        logger.info('Skipping evaluation for %s. Already exists!', res_file)
+        return
 
     overlay = np.array([pred_labels.flatten(),
                         gt_labels.flatten()])
-    print("overlay shape", overlay.shape)
+    logger.debug("overlay shape %s", overlay.shape)
     # get overlaying cells and the size of the overlap
     overlay_labels, overlay_labels_counts = np.unique(overlay,
                                          return_counts=True, axis=1)
@@ -233,10 +240,10 @@ def evaluate_file(res_file, gt_file, background=0,
         segGT.pop(background)
 
     if not diceGT:
-        logger.error("No labels found in gt image")
+        logger.error("%s: No labels found in gt image", gt_file)
         return
     if not diceP:
-        logger.error("No labels found in pred image")
+        logger.error("%s: No labels found in pred image", res_file)
         return
 
     dice = 0
@@ -444,10 +451,10 @@ if __name__ == "__main__":
     parser.add_argument("--debug", help="",
                     action="store_true")
 
-    print(sys.argv)
+    logger.debug("arguments %s",tuple(sys.argv))
     args = parser.parse_args()
     if args.use_gt_fg:
-        print("using gt foreground")
+        logger.info("using gt foreground")
 
     evaluate_file(args.res_file, args.gt_file,
                   foreground_only=args.use_gt_fg,
