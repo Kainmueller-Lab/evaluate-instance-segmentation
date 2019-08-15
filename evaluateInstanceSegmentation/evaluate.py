@@ -148,9 +148,15 @@ def evaluate_file(res_file, gt_file, background=0,
         kwargs['out_dir'],
         os.path.splitext(os.path.basename(res_file))[0] +
         kwargs['res_key'].replace("/","_") + kwargs['suffix'])
+    if res_file.endswith(".hdf"):
+        outFn = outFnBase + "_hdf_scores.txt"
+    else:
+        outFn = outFnBase + "_tif_scores.txt"
+
     if len(glob.glob(outFnBase + "*")) > 0:
         logger.info('Skipping evaluation for %s. Already exists!', res_file)
-        return
+        tomlFl = open(outFn+".toml", 'r')
+        return toml.load(tomlFl)
 
     overlay = np.array([pred_labels.flatten(),
                         gt_labels.flatten()])
@@ -360,11 +366,6 @@ def evaluate_file(res_file, gt_file, background=0,
     tpGT = np.sum(np.sum(matches_mat, axis=0) > 0)
     tpGT = int(tpGT)
 
-    metrics = {}
-    if res_file.endswith(".hdf"):
-        outFn = outFnBase + "_hdf_scores.txt"
-    else:
-        outFn = outFnBase + "_tif_scores.txt"
 
     metrics = Metrics(outFn)
     tblNameGen = "general"
