@@ -149,9 +149,9 @@ def evaluate_file(res_file, gt_file, background=0,
         os.path.splitext(os.path.basename(res_file))[0] +
         kwargs['res_key'].replace("/","_") + kwargs['suffix'])
     if res_file.endswith(".hdf"):
-        outFn = outFnBase + "_hdf_scores.txt"
+        outFn = outFnBase + "_hdf_scores"
     else:
-        outFn = outFnBase + "_tif_scores.txt"
+        outFn = outFnBase + "_tif_scores"
 
     if len(glob.glob(outFnBase + "*")) > 0:
         logger.info('Skipping evaluation for %s. Already exists!', res_file)
