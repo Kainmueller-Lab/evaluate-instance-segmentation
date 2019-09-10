@@ -6,6 +6,8 @@ import sys
 import h5py
 import argparse
 import numpy as np
+from scipy.optimize import linear_sum_assignment
+from skimage.segmentation import relabel_sequential
 import tifffile
 import toml
 import zarr
@@ -148,6 +150,8 @@ def evaluate_file(res_file, gt_file, background=0,
         kwargs['out_dir'],
         os.path.splitext(os.path.basename(res_file))[0] +
         kwargs['res_key'].replace("/","_") + kwargs['suffix'])
+    if kwargs.get('use_linear_sum_assignment'):
+        outFnBase += "_linear"
     if res_file.endswith(".hdf"):
         outFn = outFnBase + "_hdf_scores"
     else:
@@ -157,6 +161,9 @@ def evaluate_file(res_file, gt_file, background=0,
         logger.info('Skipping evaluation for %s. Already exists!', res_file)
         tomlFl = open(outFn+".toml", 'r')
         return toml.load(tomlFl)
+
+    if kwargs.get('use_linear_sum_assignment'):
+        return evaluate_linear_sum_assignment(gt_labels, pred_labels, outFn)
 
     overlay = np.array([pred_labels.flatten(),
                         gt_labels.flatten()])
@@ -415,6 +422,90 @@ def evaluate_file(res_file, gt_file, background=0,
         precision = 1.*(apTP) / len(pred_labels_list)
         metrics.addMetric(tblname, "precision", precision)
         recall = 1.*(apTP) / len(gt_labels_list)
+        metrics.addMetric(tblname, "recall", recall)
+        if (precision + recall) > 0:
+            fscore = (2. * precision * recall) / (precision + recall)
+        else:
+            fscore = 0.0
+        metrics.addMetric(tblname, 'fscore', fscore)
+
+    avAP = np.mean(aps)
+    metrics.addMetric("confusion_matrix", "avAP", avAP)
+
+    return metrics.metricsDict
+
+
+def evaluate_linear_sum_assignment(gt_labels, pred_labels, outFn):
+    pred_labels_rel, _, _ = relabel_sequential(pred_labels)
+    gt_labels_rel, _, _ = relabel_sequential(gt_labels)
+    overlay = np.array([pred_labels_rel.flatten(),
+                        gt_labels_rel.flatten()])
+    logger.debug("overlay shape relabeled %s", overlay.shape)
+    # get overlaying cells and the size of the overlap
+    overlay_labels, overlay_labels_counts = np.unique(
+        overlay, return_counts=True, axis=1)
+    overlay_labels = np.transpose(overlay_labels)
+
+    # get gt cell ids and the size of the corresponding cell
+    gt_labels_list, gt_counts = np.unique(gt_labels_rel, return_counts=True)
+    gt_labels_count_dict = {}
+    logger.debug("%s %s", gt_labels_list, gt_counts)
+    for (l,c) in zip(gt_labels_list, gt_counts):
+        gt_labels_count_dict[l] = c
+
+    # get pred cell ids
+    pred_labels_list, pred_counts = np.unique(pred_labels_rel,
+                                              return_counts=True)
+    logger.debug("%s %s", pred_labels_list, pred_counts)
+
+    pred_labels_count_dict = {}
+    for (l,c) in zip(pred_labels_list, pred_counts):
+        pred_labels_count_dict[l] = c
+
+    num_pred_labels = np.max(pred_labels_rel)
+    num_gt_labels = np.max(gt_labels_rel)
+    num_matches = min(num_gt_labels, num_pred_labels)
+    iouMat = np.zeros((num_gt_labels+1, num_pred_labels+1),
+                      dtype=np.float32)
+    for (u,v), c in zip(overlay_labels, overlay_labels_counts):
+        iou = c / (gt_labels_count_dict[v] + pred_labels_count_dict[u] - c)
+
+        iouMat[v, u] = iou
+    iouMat = iouMat[1:, 1:]
+
+    metrics = Metrics(outFn)
+    tblNameGen = "general"
+    metrics.addTable(tblNameGen)
+    metrics.addMetric(tblNameGen, "Num GT", num_gt_labels)
+    metrics.addMetric(tblNameGen, "Num Pred", num_pred_labels)
+
+    ths = [0.5]
+    aps = []
+    metrics.addTable("confusion_matrix")
+    for th in ths:
+        tblname = "confusion_matrix.th_"+str(th).replace(".","_")
+        metrics.addTable(tblname)
+        if num_matches > 0 and np.max(iouMat) > th:
+            costs = -(iouMat >= th).astype(float) - iouMat / (2*num_matches)
+            logger.info("start computing lin sum assign for th %s (%s)",
+                        th, outFn)
+            gt_ind, pred_ind = linear_sum_assignment(costs)
+            assert num_matches == len(gt_ind) == len(pred_ind)
+            match_ok = iouMat[gt_ind, pred_ind] >= th
+            tp = np.count_nonzero(match_ok)
+        else:
+            tp = 0
+        fp = num_pred_labels - tp
+        fn = num_gt_labels - tp
+        metrics.addMetric(tblname, "AP_TP", tp)
+        metrics.addMetric(tblname, "AP_FP", fp)
+        metrics.addMetric(tblname, "AP_FN", fn)
+        ap = tp / (tp + fn + fp)
+        aps.append(ap)
+        metrics.addMetric(tblname, "AP", ap)
+        precision = tp / (tp + fp)
+        metrics.addMetric(tblname, "precision", precision)
+        recall = tp / (tp + fn)
         metrics.addMetric(tblname, "recall", recall)
         if (precision + recall) > 0:
             fscore = (2. * precision * recall) / (precision + recall)
