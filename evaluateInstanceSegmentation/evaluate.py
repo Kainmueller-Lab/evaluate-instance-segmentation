@@ -55,41 +55,49 @@ class Metrics:
         tbl[name] = value
 
 
-def maybe_crop(pred_labels, gt_labels):
-    if gt_labels.shape == pred_labels.shape:
-        return pred_labels, gt_labels
-    if gt_labels.shape[0] > pred_labels.shape[0]:
-        bigger_arr = gt_labels
-        smaller_arr = pred_labels
-        swapped = False
+def maybe_crop(pred_labels, gt_labels, overlapping_inst=False):
+    if overlapping_inst:
+        if gt_labels.shape[1:] == pred_labels.shape[1:]:
+            return pred_labels, gt_labels
+        else:
+            # todo: add other cases
+            raise NotImplementedError("Sorry, cropping for overlapping "
+                                      "instances not implemented yet!")
     else:
-        bigger_arr = pred_labels
-        smaller_arr = gt_labels
-        swapped = True
-    begin = (np.array(bigger_arr.shape) -
-             np.array(smaller_arr.shape)) // 2
-    end = np.array(bigger_arr.shape) - begin
-    if len(bigger_arr.shape) == 2:
-        bigger_arr = bigger_arr[begin[0]:end[0],
-                                begin[1]:end[1]]
-    else:
-        # TODO: check if necessary/correct
-        if (np.array(bigger_arr.shape) -
-            np.array(smaller_arr.shape))[2] % 2 == 1:
-            end[2] -= 1
-        bigger_arr = bigger_arr[begin[0]:end[0],
-                                begin[1]:end[1],
-                                begin[2]:end[2]]
-    if not swapped:
-        gt_labels = bigger_arr
-        pred_labels = smaller_arr
-    else:
-        pred_labels = bigger_arr
-        gt_labels = smaller_arr
-    logger.debug("gt shape cropped %s", gt_labels.shape)
-    logger.debug("pred shape cropped %s", pred_labels.shape)
+        if gt_labels.shape == pred_labels.shape:
+            return pred_labels, gt_labels
+        if gt_labels.shape[0] > pred_labels.shape[0]:
+            bigger_arr = gt_labels
+            smaller_arr = pred_labels
+            swapped = False
+        else:
+            bigger_arr = pred_labels
+            smaller_arr = gt_labels
+            swapped = True
+        begin = (np.array(bigger_arr.shape) -
+                 np.array(smaller_arr.shape)) // 2
+        end = np.array(bigger_arr.shape) - begin
+        if len(bigger_arr.shape) == 2:
+            bigger_arr = bigger_arr[begin[0]:end[0],
+                                    begin[1]:end[1]]
+        else:
+            # TODO: check if necessary/correct
+            if (np.array(bigger_arr.shape) -
+                np.array(smaller_arr.shape))[2] % 2 == 1:
+                end[2] -= 1
+            bigger_arr = bigger_arr[begin[0]:end[0],
+                                    begin[1]:end[1],
+                                    begin[2]:end[2]]
+        if not swapped:
+            gt_labels = bigger_arr
+            pred_labels = smaller_arr
+        else:
+            pred_labels = bigger_arr
+            gt_labels = smaller_arr
+        logger.debug("gt shape cropped %s", gt_labels.shape)
+        logger.debug("pred shape cropped %s", pred_labels.shape)
 
-    return pred_labels, gt_labels
+        return pred_labels, gt_labels
 
 def evaluate_file(res_file, gt_file, background=0,
                   foreground_only=False, **kwargs):
@@ -111,8 +119,7 @@ def evaluate_file(res_file, gt_file, background=0,
     logger.debug("prediction min %f, max %f, shape %s", np.min(pred_labels),
                  np.max(pred_labels), pred_labels.shape)
     # TODO: check if reshaping necessary
-    if pred_labels.shape[0] == 1:
-        pred_labels.shape = pred_labels.shape[1:]
+    pred_labels = np.squeeze(pred_labels)
     logger.debug("prediction shape %s", pred_labels.shape)
 
     # read ground truth data
@@ -140,7 +147,10 @@ def evaluate_file(res_file, gt_file, background=0,
     logger.debug("gt shape %s", gt_labels.shape)
 
     # TODO: check if necessary
-    pred_labels, gt_labels = maybe_crop(pred_labels, gt_labels)
+    # heads up: should not crop channel dimensions, assuming channels first
+    overlapping_inst = kwargs.get('overlapping_inst', False)
+    pred_labels, gt_labels = maybe_crop(pred_labels, gt_labels,
+                                        overlapping_inst)
 
     if foreground_only:
         pred_labels[gt_labels==0] = 0
@@ -165,25 +175,48 @@ def evaluate_file(res_file, gt_file, background=0,
     if kwargs.get('use_linear_sum_assignment'):
         return evaluate_linear_sum_assignment(gt_labels, pred_labels, outFn)
 
-    overlay = np.array([pred_labels.flatten(),
-                        gt_labels.flatten()])
-    logger.debug("overlay shape %s", overlay.shape)
-    # get overlaying cells and the size of the overlap
-    overlay_labels, overlay_labels_counts = np.unique(overlay,
-                                         return_counts=True, axis=1)
-    overlay_labels = np.transpose(overlay_labels)
+    # relabel gt labels in case of binary mask per channel
+    if overlapping_inst and np.max(gt_labels) == 1:
+        for i in range(gt_labels.shape[0]):
+            gt_labels[i] = gt_labels[i] * (i + 1)
 
     # get gt cell ids and the size of the corresponding cell
     gt_labels_list, gt_counts = np.unique(gt_labels, return_counts=True)
     gt_labels_count_dict = {}
-    for (l,c) in zip(gt_labels_list, gt_counts):
+    for (l, c) in zip(gt_labels_list, gt_counts):
         gt_labels_count_dict[l] = c
 
     # get pred cell ids
-    pred_labels_list, pred_counts = np.unique(pred_labels, return_counts=True)
+    pred_labels_list, pred_counts = np.unique(pred_labels,
+                                              return_counts=True)
     pred_labels_count_dict = {}
-    for (l,c) in zip(pred_labels_list, pred_counts):
+    for (l, c) in zip(pred_labels_list, pred_counts):
         pred_labels_count_dict[l] = c
+
+    # get overlapping labels
+    if overlapping_inst:
+        pred_tile = [1,] * pred_labels.ndim
+        pred_tile[0] = gt_labels.shape[0]
+        gt_tile = [1,] * gt_labels.ndim
+        gt_tile[1] = pred_labels.shape[0]
+        pred_tiled = np.tile(pred_labels, pred_tile).flatten()
+        gt_tiled = np.tile(gt_labels, gt_tile).flatten()
+        mask = np.logical_or(pred_tiled > 0, gt_tiled > 0)
+        overlay = np.array([
+            pred_tiled[mask],
+            gt_tiled[mask]
+        ])
+        overlay_labels, overlay_labels_counts = np.unique(
+            overlay, return_counts=True, axis=1)
+        overlay_labels = np.transpose(overlay_labels)
+    else:
+        overlay = np.array([pred_labels.flatten(),
+                            gt_labels.flatten()])
+        logger.debug("overlay shape %s", overlay.shape)
+        # get overlaying cells and the size of the overlap
+        overlay_labels, overlay_labels_counts = np.unique(overlay,
+                                             return_counts=True, axis=1)
+        overlay_labels = np.transpose(overlay_labels)
 
     # identify overlaying cells where more than 50% of gt cell is covered
     matchesSEG = np.asarray([c > 0.5 * float(gt_counts[gt_labels_list == v])
