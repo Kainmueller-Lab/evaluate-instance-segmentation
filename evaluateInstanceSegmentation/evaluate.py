@@ -183,12 +183,14 @@ def evaluate_file(res_file, gt_file, background=0,
     # get gt cell ids and the size of the corresponding cell
     gt_labels_list, gt_counts = np.unique(gt_labels, return_counts=True)
     gt_labels_count_dict = {}
+    logger.debug("%s %s", gt_labels_list, gt_counts)
     for (l, c) in zip(gt_labels_list, gt_counts):
         gt_labels_count_dict[l] = c
 
     # get pred cell ids
     pred_labels_list, pred_counts = np.unique(pred_labels,
                                               return_counts=True)
+    logger.debug("%s %s", pred_labels_list, pred_counts)
     pred_labels_count_dict = {}
     for (l, c) in zip(pred_labels_list, pred_counts):
         pred_labels_count_dict[l] = c
@@ -495,8 +497,8 @@ def evaluate_linear_sum_assignment(gt_labels, pred_labels, outFn):
     for (l,c) in zip(pred_labels_list, pred_counts):
         pred_labels_count_dict[l] = c
 
-    num_pred_labels = np.max(pred_labels_rel)
-    num_gt_labels = np.max(gt_labels_rel)
+    num_pred_labels = int(np.max(pred_labels_rel))
+    num_gt_labels = int(np.max(gt_labels_rel))
     num_matches = min(num_gt_labels, num_pred_labels)
     iouMat = np.zeros((num_gt_labels+1, num_pred_labels+1),
                       dtype=np.float32)
