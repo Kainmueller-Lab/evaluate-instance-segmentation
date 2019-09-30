@@ -514,11 +514,11 @@ def evaluate_linear_sum_assignment(gt_labels, pred_labels, outFn):
     metrics.addMetric(tblNameGen, "Num GT", num_gt_labels)
     metrics.addMetric(tblNameGen, "Num Pred", num_pred_labels)
 
-    ths = [0.5]
+    ths = [0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9]
     aps = []
     metrics.addTable("confusion_matrix")
     for th in ths:
-        tblname = "confusion_matrix.th_"+str(th).replace(".","_")
+        tblname = "confusion_matrix.th_"+str(th).replace(".", "_")
         metrics.addTable(tblname)
         if num_matches > 0 and np.max(iouMat) > th:
             costs = -(iouMat >= th).astype(float) - iouMat / (2*num_matches)
