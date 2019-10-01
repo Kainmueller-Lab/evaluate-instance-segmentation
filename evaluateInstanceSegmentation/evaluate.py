@@ -22,7 +22,7 @@ class Metrics:
         self.fn = fn
         self.outFl = open(self.fn+".txt", 'w')
 
-    def __del__(self):
+    def save(self):
         self.outFl.close()
         tomlFl = open(self.fn+".toml", 'w')
         toml.dump(self.metricsDict, tomlFl)
@@ -467,6 +467,7 @@ def evaluate_file(res_file, gt_file, background=0,
     avAP = np.mean(aps)
     metrics.addMetric("confusion_matrix", "avAP", avAP)
 
+    metrics.save()
     return metrics.metricsDict
 
 
@@ -551,6 +552,7 @@ def evaluate_linear_sum_assignment(gt_labels, pred_labels, outFn):
     avAP = np.mean(aps)
     metrics.addMetric("confusion_matrix", "avAP", avAP)
 
+    metrics.save()
     return metrics.metricsDict
 
 
