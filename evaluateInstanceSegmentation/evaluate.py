@@ -300,7 +300,7 @@ def evaluate_file(res_file, gt_file, background=0,
         vs = sorted(vs, reverse=True)
         dice += vs[0]
         cnt += 1
-    diceGT = dice/cnt
+    diceGT = dice/max(1, cnt)
 
     dice = 0
     cnt = 0
@@ -308,7 +308,7 @@ def evaluate_file(res_file, gt_file, background=0,
         vs = sorted(vs, reverse=True)
         dice += vs[0]
         cnt += 1
-    diceP = dice/cnt
+    diceP = dice/max(1, cnt)
 
     iou = []
     instances = gt_labels.copy().astype(np.float32)
@@ -357,7 +357,7 @@ def evaluate_file(res_file, gt_file, background=0,
         vs = sorted(vs, reverse=True)
         seg += vs[0]
         cnt += 1
-    segGT = seg/cnt
+    segGT = seg/max(1, cnt)
 
     seg = 0
     cnt = 0
@@ -365,7 +365,7 @@ def evaluate_file(res_file, gt_file, background=0,
         vs = sorted(vs, reverse=True)
         seg += vs[0]
         cnt += 1
-    segP = seg/cnt
+    segP = seg/max(1, cnt)
 
     seg = 0
     cnt = 0
@@ -373,7 +373,7 @@ def evaluate_file(res_file, gt_file, background=0,
         vs = sorted(vs, reverse=True)
         seg += vs[0]
         cnt += 1
-    segPrev = seg/cnt
+    segPrev = seg/max(1, cnt)
 
     # non-split vertices num non-empty cols - num non-empty rows
     # (more than one entry in col: predicted cell with more than one
@@ -451,15 +451,15 @@ def evaluate_file(res_file, gt_file, background=0,
         metrics.addMetric(tblname, "AP_TP", apTP)
         metrics.addMetric(tblname, "AP_FP", apFP)
         metrics.addMetric(tblname, "AP_FN", apFN)
-        ap = 1.*(apTP) / (apTP + apFN + apFP)
+        ap = 1.*(apTP) / max(1, apTP + apFN + apFP)
         aps.append(ap)
         metrics.addMetric(tblname, "AP", ap)
-        precision = 1.*(apTP) / len(pred_labels_list)
+        precision = 1.*(apTP) / max(1, len(pred_labels_list))
         metrics.addMetric(tblname, "precision", precision)
-        recall = 1.*(apTP) / len(gt_labels_list)
+        recall = 1.*(apTP) / max(1, len(gt_labels_list))
         metrics.addMetric(tblname, "recall", recall)
         if (precision + recall) > 0:
-            fscore = (2. * precision * recall) / (precision + recall)
+            fscore = (2. * precision * recall) / max(1, precision + recall)
         else:
             fscore = 0.0
         metrics.addMetric(tblname, 'fscore', fscore)
@@ -535,15 +535,15 @@ def evaluate_linear_sum_assignment(gt_labels, pred_labels, outFn):
         metrics.addMetric(tblname, "AP_TP", tp)
         metrics.addMetric(tblname, "AP_FP", fp)
         metrics.addMetric(tblname, "AP_FN", fn)
-        ap = tp / (tp + fn + fp)
+        ap = tp / max(1, tp + fn + fp)
         aps.append(ap)
         metrics.addMetric(tblname, "AP", ap)
-        precision = tp / (tp + fp)
+        precision = tp / max(1, tp + fp)
         metrics.addMetric(tblname, "precision", precision)
-        recall = tp / (tp + fn)
+        recall = tp / max(1, tp + fn)
         metrics.addMetric(tblname, "recall", recall)
         if (precision + recall) > 0:
-            fscore = (2. * precision * recall) / (precision + recall)
+            fscore = (2. * precision * recall) / max(1, precision + recall)
         else:
             fscore = 0.0
         metrics.addMetric(tblname, 'fscore', fscore)
