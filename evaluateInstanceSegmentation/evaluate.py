@@ -167,10 +167,21 @@ def evaluate_file(res_file, gt_file, background=0,
     else:
         outFn = outFnBase + "_tif_scores"
 
-    if len(glob.glob(outFnBase + "*")) > 0:
-        logger.info('Skipping evaluation for %s. Already exists!', res_file)
-        tomlFl = open(outFn+".toml", 'r')
-        return toml.load(tomlFl)
+    if len(glob.glob(outFnBase + "*.toml")) > 0:
+        with open(outFn+".toml", 'r') as tomlFl:
+            metrics = toml.load(tomlFl)
+        if kwargs.get('metric', None) is None:
+            return metrics
+        try:
+            metric = metrics
+            for k in kwargs['metric'].split('/'):
+                metric = metric[k]
+            logger.info('Skipping evaluation for %s. Already exists!',
+                        res_file)
+            return metrics
+        except KeyError:
+            logger.info('Error (key %s missing) in existing evaluation for %s. Recomputing!',
+                        kwargs['metric'], res_file)
 
     if kwargs.get('use_linear_sum_assignment'):
         return evaluate_linear_sum_assignment(gt_labels, pred_labels, outFn)
