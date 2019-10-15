@@ -5,7 +5,7 @@ from functools import reduce
 def deep_get(dictionary, keys, default=None):
     return reduce(
         lambda d, key: d.get(key, default) if isinstance(d, dict) else
-        default, keys.split("/"), dictionary
+        default, keys.split("."), dictionary
     )
 
 def summarize_metric_dict(metric_dicts, names, metrics, output_name):
@@ -13,7 +13,7 @@ def summarize_metric_dict(metric_dicts, names, metrics, output_name):
     csvf = open(output_name, 'w', newline='')
     writer = csv.writer(csvf, delimiter=';',
                         quotechar='|', quoting=csv.QUOTE_MINIMAL)
-    header = ['sample'] + [m.split('/')[-2] + ' ' + m.split('/')[-1] for m in
+    header = ['sample'] + [m.split('.')[-2] + ' ' + m.split('.')[-1] for m in
                       metrics]
     writer.writerow(header)
 
