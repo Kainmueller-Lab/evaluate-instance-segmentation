@@ -514,11 +514,25 @@ def evaluate_linear_sum_assignment(gt_labels, pred_labels, outFn):
     num_matches = min(num_gt_labels, num_pred_labels)
     iouMat = np.zeros((num_gt_labels+1, num_pred_labels+1),
                       dtype=np.float32)
+    recallMat = np.zeros((num_gt_labels+1, num_pred_labels+1),
+                         dtype=np.float32)
+    precMat = np.zeros((num_gt_labels+1, num_pred_labels+1),
+                       dtype=np.float32)
+    fscoreMat = np.zeros((num_gt_labels+1, num_pred_labels+1),
+                         dtype=np.float32)
+
     for (u,v), c in zip(overlay_labels, overlay_labels_counts):
         iou = c / (gt_labels_count_dict[v] + pred_labels_count_dict[u] - c)
 
         iouMat[v, u] = iou
+        recallMat[v, u] = c / gt_labels_count_dict[v]
+        precMat[v, u] = c / pred_labels_count_dict[u]
+        fscoreMat[v, u] = 2 * (precMat[v, u] * recallMat[v, u]) / \
+                              (precMat[v, u] + recallMat[v, u])
     iouMat = iouMat[1:, 1:]
+    recallMat = recallMat[1:, 1:]
+    precMat = precMat[1:, 1:]
+    fscoreMat = fscoreMat[1:, 1:]
 
     metrics = Metrics(outFn)
     tblNameGen = "general"
@@ -540,8 +554,16 @@ def evaluate_linear_sum_assignment(gt_labels, pred_labels, outFn):
             assert num_matches == len(gt_ind) == len(pred_ind)
             match_ok = iouMat[gt_ind, pred_ind] >= th
             tp = np.count_nonzero(match_ok)
+            fscore_cnt = 0
+            for idx, match in enumerate(match_ok):
+                if match:
+                    fscore = fscoreMat[gt_ind[idx], pred_ind[idx]]
+                    if fscore >= 0.8:
+                        fscore_cnt += 1
         else:
             tp = 0
+            fscore_cnt = 0
+        metrics.addMetric(tblname, "Fscore_cnt", fscore_cnt)
         fp = num_pred_labels - tp
         fn = num_gt_labels - tp
         metrics.addMetric(tblname, "AP_TP", tp)
