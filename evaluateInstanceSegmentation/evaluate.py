@@ -183,13 +183,14 @@ def evaluate_file(res_file, gt_file, background=0,
             logger.info('Error (key %s missing) in existing evaluation for %s. Recomputing!',
                         kwargs['metric'], res_file)
 
-    if kwargs.get('use_linear_sum_assignment'):
-        return evaluate_linear_sum_assignment(gt_labels, pred_labels, outFn)
-
     # relabel gt labels in case of binary mask per channel
     if overlapping_inst and np.max(gt_labels) == 1:
         for i in range(gt_labels.shape[0]):
             gt_labels[i] = gt_labels[i] * (i + 1)
+
+    if kwargs.get('use_linear_sum_assignment'):
+        return evaluate_linear_sum_assignment(gt_labels, pred_labels, outFn,
+                                              overlapping_inst)
 
     # get gt cell ids and the size of the corresponding cell
     gt_labels_list, gt_counts = np.unique(gt_labels, return_counts=True)
@@ -482,16 +483,34 @@ def evaluate_file(res_file, gt_file, background=0,
     return metrics.metricsDict
 
 
-def evaluate_linear_sum_assignment(gt_labels, pred_labels, outFn):
+def evaluate_linear_sum_assignment(gt_labels, pred_labels, outFn,
+                                   overlapping_inst=False):
     pred_labels_rel, _, _ = relabel_sequential(pred_labels)
     gt_labels_rel, _, _ = relabel_sequential(gt_labels)
-    overlay = np.array([pred_labels_rel.flatten(),
-                        gt_labels_rel.flatten()])
-    logger.debug("overlay shape relabeled %s", overlay.shape)
-    # get overlaying cells and the size of the overlap
-    overlay_labels, overlay_labels_counts = np.unique(
-        overlay, return_counts=True, axis=1)
-    overlay_labels = np.transpose(overlay_labels)
+
+    if overlapping_inst:
+        pred_tile = [1, ] * pred_labels_rel.ndim
+        pred_tile[0] = gt_labels_rel.shape[0]
+        gt_tile = [1, ] * gt_labels_rel.ndim
+        gt_tile[1] = pred_labels_rel.shape[0]
+        pred_tiled = np.tile(pred_labels_rel, pred_tile).flatten()
+        gt_tiled = np.tile(gt_labels_rel, gt_tile).flatten()
+        mask = np.logical_or(pred_tiled > 0, gt_tiled > 0)
+        overlay = np.array([
+            pred_tiled[mask],
+            gt_tiled[mask]
+        ])
+        overlay_labels, overlay_labels_counts = np.unique(
+            overlay, return_counts=True, axis=1)
+        overlay_labels = np.transpose(overlay_labels)
+    else:
+        overlay = np.array([pred_labels_rel.flatten(),
+                            gt_labels_rel.flatten()])
+        logger.debug("overlay shape relabeled %s", overlay.shape)
+        # get overlaying cells and the size of the overlap
+        overlay_labels, overlay_labels_counts = np.unique(
+            overlay, return_counts=True, axis=1)
+        overlay_labels = np.transpose(overlay_labels)
 
     # get gt cell ids and the size of the corresponding cell
     gt_labels_list, gt_counts = np.unique(gt_labels_rel, return_counts=True)
@@ -546,6 +565,7 @@ def evaluate_linear_sum_assignment(gt_labels, pred_labels, outFn):
     for th in ths:
         tblname = "confusion_matrix.th_"+str(th).replace(".", "_")
         metrics.addTable(tblname)
+        fscore = 0
         if num_matches > 0 and np.max(iouMat) > th:
             costs = -(iouMat >= th).astype(float) - iouMat / (2*num_matches)
             logger.info("start computing lin sum assign for th %s (%s)",

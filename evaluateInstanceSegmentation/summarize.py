@@ -20,10 +20,15 @@ def summarize_metric_dict(metric_dicts, names, metrics, output_name):
     summary = np.zeros((len(metric_dicts), len(metrics)))
     for i, (name, metric_dict) in enumerate(zip(names, metric_dicts)):
         for k in range(len(metrics)):
-            summary[i, k] = deep_get(metric_dict, metrics[k])
+            v = deep_get(metric_dict, metrics[k])
+            if v is not None:
+                summary[i, k] = float(v)
+            else:
+                summary[i, k] = 0.0
 
         writer.writerow([name] + list(summary[i]))
 
     writer.writerow(['mean'] + list(np.mean(summary, axis=0)))
+    writer.writerow(['sum'] + list(np.sum(summary, axis=0)))
 
     csvf.close()
