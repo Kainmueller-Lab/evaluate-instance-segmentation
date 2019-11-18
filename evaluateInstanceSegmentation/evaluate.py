@@ -162,6 +162,8 @@ def evaluate_file(res_file, gt_file, background=0,
         kwargs['res_key'].replace("/","_") + kwargs['suffix'])
     if kwargs.get('use_linear_sum_assignment'):
         outFnBase += "_linear"
+    else:
+        outFnBase += "_seg"
     if res_file.endswith(".hdf"):
         outFn = outFnBase + "_hdf_scores"
     else:
@@ -540,7 +542,7 @@ def evaluate_linear_sum_assignment(gt_labels, pred_labels, outFn):
     metrics.addMetric(tblNameGen, "Num GT", num_gt_labels)
     metrics.addMetric(tblNameGen, "Num Pred", num_pred_labels)
 
-    ths = [0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9]
+    ths = [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9]
     aps = []
     metrics.addTable("confusion_matrix")
     for th in ths:
