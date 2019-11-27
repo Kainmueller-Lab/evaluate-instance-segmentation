@@ -176,7 +176,7 @@ def evaluate_file(res_file, gt_file, background=0,
             return metrics
         try:
             metric = metrics
-            for k in kwargs['metric'].split('/'):
+            for k in kwargs['metric'].split('.'):
                 metric = metric[k]
             logger.info('Skipping evaluation for %s. Already exists!',
                         res_file)
