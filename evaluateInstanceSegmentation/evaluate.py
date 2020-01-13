@@ -169,7 +169,7 @@ def evaluate_file(res_file, gt_file, background=0,
     else:
         outFn = outFnBase + "_tif_scores"
 
-    if len(glob.glob(outFnBase + "*.toml")) > 0:
+    if not kwargs.get("from_scratch") and len(glob.glob(outFnBase + "*.toml")) > 0:
         with open(outFn+".toml", 'r') as tomlFl:
             metrics = toml.load(tomlFl)
         if kwargs.get('metric', None) is None:
@@ -561,7 +561,7 @@ def evaluate_linear_sum_assignment(gt_labels, pred_labels, outFn,
     metrics.addMetric(tblNameGen, "Num GT", num_gt_labels)
     metrics.addMetric(tblNameGen, "Num Pred", num_pred_labels)
 
-    ths = [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9]
+    ths = [0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9]
     aps = []
     metrics.addTable("confusion_matrix")
     for th in ths:
@@ -569,12 +569,12 @@ def evaluate_linear_sum_assignment(gt_labels, pred_labels, outFn,
         metrics.addTable(tblname)
         fscore = 0
         if num_matches > 0 and np.max(iouMat) > th:
-            costs = -(iouMat >= th).astype(float) - iouMat / (2*num_matches)
+            costs = -(iouMat > th).astype(float) - iouMat / (2*num_matches)
             logger.info("start computing lin sum assign for th %s (%s)",
                         th, outFn)
             gt_ind, pred_ind = linear_sum_assignment(costs)
             assert num_matches == len(gt_ind) == len(pred_ind)
-            match_ok = iouMat[gt_ind, pred_ind] >= th
+            match_ok = iouMat[gt_ind, pred_ind] > th
             tp = np.count_nonzero(match_ok)
             fscore_cnt = 0
             for idx, match in enumerate(match_ok):
