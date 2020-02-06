@@ -616,7 +616,7 @@ if __name__ == "__main__":
     parser.add_argument('--res_file', type=str,
                         help='path to res_file', required=True)
     parser.add_argument('--res_file_suffix', type=str,
-                        help='res_file suffix')
+                        help='res_file suffix (deprecated)')
     parser.add_argument('--res_key', type=str,
                         help='name labeling hdf key')
     parser.add_argument('--gt_file', type=str,
@@ -625,15 +625,27 @@ if __name__ == "__main__":
                         help='name gt hdf key')
     parser.add_argument('--out_dir', type=str,
                         help='output directory', required=True)
+    parser.add_argument('--metric', type=str,
+                        default="confusion_matrix.th_0_5.AP",
+                        help='check if this metric already has been computed in possibly existing result files')
     parser.add_argument('--suffix', type=str,
-                        help='suffix', default="")
+                        help='suffix (deprecated)', default="")
     parser.add_argument('--background', type=int,
                         help='label for background (use -1 for None)',
                         default="0")
-    parser.add_argument("--use_gt_fg", help="",
-                    action="store_true")
+    parser.add_argument("--use_gt_fg", help="usually not used (deprecated)",
+                        action="store_true")
+    parser.add_argument("--overlapping_inst", help="if there can be multiple instances per pixel",
+                        action="store_true")
+    parser.add_argument("--from_scratch",
+                        help="recompute everything (instead of checking if results are already there)",
+                        action="store_true")
+    parser.add_argument("--no_use_linear_sum_assignment",
+                        help="don't use Hungarian matching",
+                        dest='use_linear_sum_assignment',
+                        action="store_false")
     parser.add_argument("--debug", help="",
-                    action="store_true")
+                        action="store_true")
 
     logger.debug("arguments %s",tuple(sys.argv))
     args = parser.parse_args()

@@ -5,9 +5,18 @@ setup(
         version='0.1',
         description='Evaluate instance segmentation.',
         url='',
-        author='Peter Hirsch',
+        author='Peter Hirsch, Lisa Mais',
         author_email='kainmuellerlab@mdc-berlin.de',
         license='MIT',
+        install_requires=[
+            'h5py',
+            'numpy',
+            'scipy',
+            'scikit-image',
+            'toml',
+            'tifffile',
+            'zarr',
+        ],
         packages=[
                 'evaluateInstanceSegmentation',
         ]
