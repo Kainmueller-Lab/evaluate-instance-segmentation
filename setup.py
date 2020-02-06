@@ -3,7 +3,7 @@ from setuptools import setup
 setup(
         name='evaluate-instance-segmentation',
         version='0.1',
-        description='Evaluate instance segmentation.',
+        description='Evaluate instance segmentation (just instances, no semantic classes)',
         url='',
         author='Peter Hirsch, Lisa Mais',
         author_email='kainmuellerlab@mdc-berlin.de',

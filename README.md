@@ -1,6 +1,8 @@
 Evaluation scripts for instance segmentation
 =======================================================
 
+Developed for nuclei instances segmentation in 2d and 3d.
+
 usage:
 -------
 
