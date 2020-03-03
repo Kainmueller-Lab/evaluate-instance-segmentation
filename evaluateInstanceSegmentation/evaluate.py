@@ -158,6 +158,7 @@ def evaluate_file(res_file, gt_file, background=0,
     logger.info("processing %s %s", res_file, gt_file)
     outFnBase = os.path.join(
         kwargs['out_dir'],
+        '' if kwargs.get('filterSz', None) is None else str(kwargs['filterSz']),
         os.path.splitext(os.path.basename(res_file))[0] +
         kwargs['res_key'].replace("/","_") + kwargs['suffix'])
     if kwargs.get('use_linear_sum_assignment'):
@@ -168,6 +169,7 @@ def evaluate_file(res_file, gt_file, background=0,
         outFn = outFnBase + "_hdf_scores"
     else:
         outFn = outFnBase + "_tif_scores"
+    os.makedirs(os.path.dirname(outFnBase), exist_ok=True)
 
     if not kwargs.get("from_scratch") and len(glob.glob(outFnBase + "*.toml")) > 0:
         with open(outFn+".toml", 'r') as tomlFl:
@@ -192,7 +194,8 @@ def evaluate_file(res_file, gt_file, background=0,
 
     if kwargs.get('use_linear_sum_assignment'):
         return evaluate_linear_sum_assignment(gt_labels, pred_labels, outFn,
-                                              overlapping_inst)
+                                              overlapping_inst,
+                                              kwargs.get('filterSz', None))
 
     # get gt cell ids and the size of the corresponding cell
     gt_labels_list, gt_counts = np.unique(gt_labels, return_counts=True)
@@ -486,7 +489,22 @@ def evaluate_file(res_file, gt_file, background=0,
 
 
 def evaluate_linear_sum_assignment(gt_labels, pred_labels, outFn,
-                                   overlapping_inst=False):
+                                   overlapping_inst=False, filterSz=None):
+    if filterSz is not None:
+        ls, cs = np.unique(pred_labels, return_counts=True)
+        pred_labels2 = np.copy(pred_labels)
+        print(sorted(zip(cs, ls)))
+        for l, c in zip(ls, cs):
+            if c < filterSz:
+                pred_labels[pred_labels==l] = 0
+            else:
+                pred_labels2[pred_labels==l] = 0
+        print(outFn)
+        with h5py.File(outFn + ".hdf", 'w') as f:
+            f.create_dataset(
+                'volumes/small_inst',
+                data=pred_labels2,
+                compression='gzip')
     pred_labels_rel, _, _ = relabel_sequential(pred_labels)
     gt_labels_rel, _, _ = relabel_sequential(gt_labels)
 
@@ -561,7 +579,7 @@ def evaluate_linear_sum_assignment(gt_labels, pred_labels, outFn,
     metrics.addMetric(tblNameGen, "Num GT", num_gt_labels)
     metrics.addMetric(tblNameGen, "Num Pred", num_pred_labels)
 
-    ths = [0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9]
+    ths = [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9]
     aps = []
     metrics.addTable("confusion_matrix")
     for th in ths:
@@ -569,12 +587,12 @@ def evaluate_linear_sum_assignment(gt_labels, pred_labels, outFn,
         metrics.addTable(tblname)
         fscore = 0
         if num_matches > 0 and np.max(iouMat) > th:
-            costs = -(iouMat > th).astype(float) - iouMat / (2*num_matches)
+            costs = -(iouMat >= th).astype(float) - iouMat / (2*num_matches)
             logger.info("start computing lin sum assign for th %s (%s)",
                         th, outFn)
             gt_ind, pred_ind = linear_sum_assignment(costs)
             assert num_matches == len(gt_ind) == len(pred_ind)
-            match_ok = iouMat[gt_ind, pred_ind] > th
+            match_ok = iouMat[gt_ind, pred_ind] >= th
             tp = np.count_nonzero(match_ok)
             fscore_cnt = 0
             for idx, match in enumerate(match_ok):
