@@ -4,6 +4,17 @@ Evaluation scripts for instance segmentation
 Developed for nuclei instances segmentation in 2d and 3d.
 Computes average precision (AP = TP/(TP+FP+FN))
 
+installation:
+-------------
+The recommended way is to install it into your conda/python virtual environment.
+
+``` shell
+conda activate <<your-env-name>>
+git clone https://github.com/Kainmueller-Lab/evaluate-instance-segmentation
+cd evaluate-instance-segmentation
+pip install -e .
+```
+
 usage:
 -------
 
