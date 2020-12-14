@@ -478,7 +478,6 @@ def evaluate_file(res_file, gt_file, background=0,
                 apTP += 1
             elif len(iouP[iouIDs[pID]]) > 1 and iouP[iouIDs[pID]][1] < th:
                 apTP += 1
-        # TODO: check, are both versions equal? which is correct
         metrics.addMetric(tblname, "AP_TP", apTP)
         apTP = np.count_nonzero(iouP_2[iouP_2>th])
         apFP = np.count_nonzero(iouP_2[iouP_2<=th])
