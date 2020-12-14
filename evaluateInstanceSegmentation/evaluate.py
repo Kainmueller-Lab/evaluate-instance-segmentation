@@ -6,6 +6,7 @@ import sys
 import h5py
 import argparse
 import numpy as np
+import scipy.ndimage
 from scipy.optimize import linear_sum_assignment
 from skimage.segmentation import relabel_sequential
 import tifffile
@@ -24,6 +25,7 @@ class Metrics:
 
     def save(self):
         self.outFl.close()
+        logger.info("saving %s", self.fn)
         tomlFl = open(self.fn+".toml", 'w')
         toml.dump(self.metricsDict, tomlFl)
 
@@ -144,6 +146,23 @@ def evaluate_file(res_file, gt_file, background=0,
     gt_labels = np.squeeze(gt_labels)
     if gt_labels.ndim > pred_labels.ndim:
         gt_labels = np.max(gt_labels, axis=0)
+    # check if pred.dim < gt.dim
+    # if pred_labels.ndim < gt_labels.ndim:
+    #     print("WARNING: changing prediction to one instance per channel")
+    # lbls = np.unique(pred_labels)
+    # pred_1instpch = np.zeros((np.sum(lbls > 0),
+    #                                           ) + pred_labels.shape,
+    #                                          dtype=pred_labels.dtype)
+    # i = 0
+    # for lbl in lbls:
+    #     if lbl == 0:
+    #         continue
+    #     pred_1instpch[i][pred_labels == lbl] = i + 1
+    #     print("check: ", i, lbl, np.sum(pred_1instpch == i + 1),
+    #           np.sum(pred_labels == lbl))
+    #     i += 1
+
+    # pred_labels = pred_1instpch
     logger.debug("gt shape %s", gt_labels.shape)
 
     # TODO: check if necessary
@@ -180,8 +199,8 @@ def evaluate_file(res_file, gt_file, background=0,
             metric = metrics
             for k in kwargs['metric'].split('.'):
                 metric = metric[k]
-            logger.info('Skipping evaluation for %s. Already exists!',
-                        res_file)
+            logger.info('Skipping evaluation, already exists! %s',
+                        outFn)
             return metrics
         except KeyError:
             logger.info('Error (key %s missing) in existing evaluation for %s. Recomputing!',
@@ -195,7 +214,8 @@ def evaluate_file(res_file, gt_file, background=0,
     if kwargs.get('use_linear_sum_assignment'):
         return evaluate_linear_sum_assignment(gt_labels, pred_labels, outFn,
                                               overlapping_inst,
-                                              kwargs.get('filterSz', None))
+                                              kwargs.get('filterSz', None),
+                                              out_vis=kwargs.get("out_vis", False))
 
     # get gt cell ids and the size of the corresponding cell
     gt_labels_list, gt_counts = np.unique(gt_labels, return_counts=True)
@@ -444,9 +464,7 @@ def evaluate_file(res_file, gt_file, background=0,
     metrics.addMetric(tblNameGen, "GT/Ref -> Pred FN", fn)
     metrics.addMetric(tblNameGen, "GT/Ref -> Pred TP", tpGT)
 
-    ths = [0.5, 0.6, 0.7, 0.8, 0.9]
-    ths.extend([0.5, 0.55, 0.6, 0.65, 0.7, 0.75, 0.8, 0.85, 0.9, 0.95])
-    ths.extend([0.25, 0.3, 0.35, 0.4, 0.45, 0.5])
+    ths = [0.5, 0.55, 0.6, 0.65, 0.7, 0.75, 0.8, 0.85, 0.9, 0.95]
     aps = []
     metrics.addTable("confusion_matrix")
     for th in ths:
@@ -489,7 +507,8 @@ def evaluate_file(res_file, gt_file, background=0,
 
 
 def evaluate_linear_sum_assignment(gt_labels, pred_labels, outFn,
-                                   overlapping_inst=False, filterSz=None):
+                                   overlapping_inst=False, filterSz=None,
+                                   out_vis=False):
     if filterSz is not None:
         ls, cs = np.unique(pred_labels, return_counts=True)
         pred_labels2 = np.copy(pred_labels)
@@ -500,11 +519,11 @@ def evaluate_linear_sum_assignment(gt_labels, pred_labels, outFn,
             else:
                 pred_labels2[pred_labels==l] = 0
         print(outFn)
-        with h5py.File(outFn + ".hdf", 'w') as f:
-            f.create_dataset(
-                'volumes/small_inst',
-                data=pred_labels2,
-                compression='gzip')
+        # with h5py.File(outFn + ".hdf", 'w') as f:
+        #     f.create_dataset(
+        #         'volumes/small_inst',
+        #         data=pred_labels2,
+        #         compression='gzip')
     pred_labels_rel, _, _ = relabel_sequential(pred_labels)
     gt_labels_rel, _, _ = relabel_sequential(gt_labels)
 
@@ -579,7 +598,7 @@ def evaluate_linear_sum_assignment(gt_labels, pred_labels, outFn,
     metrics.addMetric(tblNameGen, "Num GT", num_gt_labels)
     metrics.addMetric(tblNameGen, "Num Pred", num_pred_labels)
 
-    ths = [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9]
+    ths = [0.1, 0.2, 0.3, 0.4, 0.5, 0.55, 0.6, 0.65, 0.7, 0.75, 0.8, 0.85, 0.9, 0.95]
     aps = []
     metrics.addTable("confusion_matrix")
     for th in ths:
@@ -603,6 +622,122 @@ def evaluate_linear_sum_assignment(gt_labels, pred_labels, outFn,
         else:
             tp = 0
             fscore_cnt = 0
+        if tp > 0 and th == 0.5:
+            vis_tp = np.zeros_like(gt_labels_rel, dtype=np.float32)
+            vis_fp = np.zeros_like(gt_labels_rel, dtype=np.float32)
+            vis_fn = np.zeros_like(gt_labels_rel, dtype=np.float32)
+            vis_tp_seg = np.zeros_like(gt_labels_rel, dtype=np.float32)
+            vis_tp_seg2 = np.zeros_like(gt_labels_rel, dtype=np.float32)
+            vis_fp_seg = np.zeros_like(gt_labels_rel, dtype=np.float32)
+            vis_fn_seg = np.zeros_like(gt_labels_rel, dtype=np.float32)
+            if len(gt_labels_rel.shape) == 3:
+                vis_fp_seg_bnd = np.zeros_like(gt_labels_rel, dtype=np.float32)
+                vis_fn_seg_bnd = np.zeros_like(gt_labels_rel, dtype=np.float32)
+
+            cntrs_gt = scipy.ndimage.measurements.center_of_mass(
+                gt_labels_rel > 0,
+                gt_labels_rel, sorted(list(np.unique(gt_labels_rel)))[1:])
+            cntrs_pred = scipy.ndimage.measurements.center_of_mass(
+                pred_labels_rel > 0,
+                pred_labels_rel, sorted(list(np.unique(pred_labels_rel)))[1:])
+            sz = 1
+            for gti, pi, in zip(gt_ind, pred_ind):
+                if iouMat[gti, pi] < th:
+                    vis_fn_seg[gt_labels_rel == gti+1] = 1
+                    if len(gt_labels_rel.shape) == 3:
+                        set_boundary(gt_labels_rel, gti+1,
+                                     vis_fn_seg_bnd)
+                    vis_fp_seg[pred_labels_rel == pi+1] = 1
+                    if len(gt_labels_rel.shape) == 3:
+                        set_boundary(pred_labels_rel, pi+1,
+                                     vis_fp_seg_bnd)
+                    cntr = cntrs_gt[gti]
+                    if len(gt_labels_rel.shape) == 3:
+                        vis_fn[int(cntr[0]), int(cntr[1]), int(cntr[2])] = 1
+                    else:
+                        vis_fn[int(cntr[0]), int(cntr[1])] = 1
+                    cntr = cntrs_pred[pi]
+                    if len(gt_labels_rel.shape) == 3:
+                        vis_fp[int(cntr[0]), int(cntr[1]), int(cntr[2])] = 1
+                    else:
+                        vis_fp[int(cntr[0]), int(cntr[1])] = 1
+                else:
+                    vis_tp_seg[gt_labels_rel == gti+1] = 1
+                    cntr = cntrs_gt[gti]
+                    if len(gt_labels_rel.shape) == 3:
+                        vis_tp[int(cntr[0]), int(cntr[1]), int(cntr[2])] = 1
+                    else:
+                        vis_tp[int(cntr[0]), int(cntr[1])] = 1
+                    vis_tp_seg2[pred_labels_rel == pi+1] = 1
+            vis_tp = scipy.ndimage.gaussian_filter(vis_tp, sz, truncate=sz)
+            for gti in range(num_gt_labels):
+                if gti in gt_ind:
+                    continue
+                vis_fn_seg[gt_labels_rel == gti+1] = 1
+                if len(gt_labels_rel.shape) == 3:
+                    set_boundary(gt_labels_rel, gti+1,
+                                 vis_fn_seg_bnd)
+                cntr = cntrs_gt[gti]
+                if len(gt_labels_rel.shape) == 3:
+                    vis_fn[int(cntr[0]), int(cntr[1]), int(cntr[2])] = 1
+                else:
+                    vis_fn[int(cntr[0]), int(cntr[1])] = 1
+            vis_fn = scipy.ndimage.gaussian_filter(vis_fn, sz, truncate=sz)
+            for pi in range(num_pred_labels):
+                if pi in pred_ind:
+                    continue
+                vis_fp_seg[pred_labels_rel == pi+1] = 1
+                if len(gt_labels_rel.shape) == 3:
+                    set_boundary(pred_labels_rel, pi+1,
+                                 vis_fp_seg_bnd)
+                cntr = cntrs_pred[pi]
+                if len(gt_labels_rel.shape) == 3:
+                    vis_fp[int(cntr[0]), int(cntr[1]), int(cntr[2])] = 1
+                else:
+                    vis_fp[int(cntr[0]), int(cntr[1])] = 1
+            vis_fp = scipy.ndimage.gaussian_filter(vis_fp, sz, truncate=sz)
+            vis_tp = vis_tp/np.max(vis_tp)
+            vis_fp = vis_fp/np.max(vis_fp)
+            vis_fn = vis_fn/np.max(vis_fn)
+            with h5py.File(outFn + "_vis.hdf", 'w') as fi:
+                fi.create_dataset(
+                    'volumes/vis_tp',
+                    data=vis_tp,
+                    compression='gzip')
+                fi.create_dataset(
+                    'volumes/vis_fp',
+                    data=vis_fp,
+                    compression='gzip')
+                fi.create_dataset(
+                    'volumes/vis_fn',
+                    data=vis_fn,
+                    compression='gzip')
+                fi.create_dataset(
+                    'volumes/vis_tp_seg',
+                    data=vis_tp_seg,
+                    compression='gzip')
+                fi.create_dataset(
+                    'volumes/vis_tp_seg2',
+                    data=vis_tp_seg2,
+                    compression='gzip')
+                fi.create_dataset(
+                    'volumes/vis_fp_seg',
+                    data=vis_fp_seg,
+                    compression='gzip')
+                fi.create_dataset(
+                    'volumes/vis_fn_seg',
+                    data=vis_fn_seg,
+                    compression='gzip')
+                if len(gt_labels_rel.shape) == 3:
+                    fi.create_dataset(
+                        'volumes/vis_fp_seg_bnd',
+                        data=vis_fp_seg_bnd,
+                        compression='gzip')
+                    fi.create_dataset(
+                        'volumes/vis_fn_seg_bnd',
+                        data=vis_fn_seg_bnd,
+                        compression='gzip')
+
         metrics.addMetric(tblname, "Fscore_cnt", fscore_cnt)
         fp = num_pred_labels - tp
         fn = num_gt_labels - tp
@@ -622,11 +757,37 @@ def evaluate_linear_sum_assignment(gt_labels, pred_labels, outFn,
             fscore = 0.0
         metrics.addMetric(tblname, 'fscore', fscore)
 
-    avAP = np.mean(aps)
-    metrics.addMetric("confusion_matrix", "avAP", avAP)
+    avAP19 = np.mean(aps)
+    avAP59 = np.mean(aps[4:])
+    metrics.addMetric("confusion_matrix", "avAP", avAP19)
+    metrics.addMetric("confusion_matrix", "avAP59", avAP59)
+    metrics.addMetric("confusion_matrix", "avAP19", avAP19)
 
     metrics.save()
     return metrics.metricsDict
+
+
+def set_boundary(labels_rel, label, target):
+    coords_z, coords_y, coords_x = np.nonzero(labels_rel == label)
+    coords = {}
+    for z,y,x in zip(coords_z, coords_y, coords_x):
+        coords.setdefault(z, []).append((z, y, x))
+    max_z = -1
+    max_z_len = -1
+    for z, v in coords.items():
+        if len(v) > max_z_len:
+            max_z_len = len(v)
+            max_z = z
+    tmp = np.zeros_like(labels_rel[max_z], dtype=np.float32)
+    tmp = labels_rel[max_z]==label
+    struct = scipy.ndimage.generate_binary_structure(2, 2)
+    eroded_tmp = scipy.ndimage.binary_erosion(
+        tmp,
+        iterations=1,
+        structure=struct,
+        border_value=1)
+    bnd = np.logical_xor(tmp, eroded_tmp)
+    target[max_z][bnd] = 1
 
 
 if __name__ == "__main__":
