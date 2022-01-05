@@ -83,7 +83,6 @@ def maybe_crop(pred_labels, gt_labels, overlapping_inst=False):
             bigger_arr = bigger_arr[begin[0]:end[0],
                                     begin[1]:end[1]]
         else:
-            # TODO: check if necessary/correct
             if (np.array(bigger_arr.shape) -
                 np.array(smaller_arr.shape))[2] % 2 == 1:
                 end[2] -= 1
@@ -120,15 +119,12 @@ def evaluate_file(res_file, gt_file, background=0,
         raise NotImplementedError("invalid file format %s", res_file)
     logger.debug("prediction min %f, max %f, shape %s", np.min(pred_labels),
                  np.max(pred_labels), pred_labels.shape)
-    # TODO: check if reshaping necessary
     pred_labels = np.squeeze(pred_labels)
     logger.debug("prediction shape %s", pred_labels.shape)
 
     # read ground truth data
     if gt_file.endswith(".hdf"):
         with h5py.File(gt_file, 'r') as f:
-            # gt_labels = np.array(f['volumes/gt_labels'])
-            # gt_labels = np.array(f['images/gt_instances'])
             gt_labels = np.array(f[kwargs['gt_key']])
     elif gt_file.endswith(".tif") or gt_file.endswith(".tiff") or \
          gt_file.endswith(".TIF") or gt_file.endswith(".TIFF"):
@@ -140,7 +136,6 @@ def evaluate_file(res_file, gt_file, background=0,
         raise NotImplementedError("invalid file format %s", gt_file)
     logger.debug("gt min %f, max %f, shape %s", np.min(gt_labels),
                  np.max(gt_labels), gt_labels.shape)
-    # TODO: check if reshaping necessary
     if gt_labels.shape[0] == 1:
         gt_labels.shape = gt_labels.shape[1:]
     gt_labels = np.squeeze(gt_labels)
@@ -165,11 +160,16 @@ def evaluate_file(res_file, gt_file, background=0,
     # pred_labels = pred_1instpch
     logger.debug("gt shape %s", gt_labels.shape)
 
-    # TODO: check if necessary
     # heads up: should not crop channel dimensions, assuming channels first
     overlapping_inst = kwargs.get('overlapping_inst', False)
     pred_labels, gt_labels = maybe_crop(pred_labels, gt_labels,
                                         overlapping_inst)
+
+    # if pred_labels.shape[0] == 536:
+    #     print(pred_labels.shape, gt_labels.shape)
+    #     pred_labels = pred_labels[12:-12, 12:-12]
+    #     gt_labels = gt_labels[12:-12, 12:-12]
+    #     print(pred_labels.shape, gt_labels.shape)
 
     if foreground_only:
         pred_labels[gt_labels==0] = 0
@@ -190,7 +190,8 @@ def evaluate_file(res_file, gt_file, background=0,
         outFn = outFnBase + "_tif_scores"
     os.makedirs(os.path.dirname(outFnBase), exist_ok=True)
 
-    if not kwargs.get("from_scratch") and len(glob.glob(outFnBase + "*.toml")) > 0:
+    if not kwargs.get("from_scratch") and \
+       len(glob.glob(outFnBase + "*.toml")) > 0:
         with open(outFn+".toml", 'r') as tomlFl:
             metrics = toml.load(tomlFl)
         if kwargs.get('metric', None) is None:
@@ -203,7 +204,8 @@ def evaluate_file(res_file, gt_file, background=0,
                         outFn)
             return metrics
         except KeyError:
-            logger.info('Error (key %s missing) in existing evaluation for %s. Recomputing!',
+            logger.info("Error (key %s missing) in existing evaluation "
+                        "for %s. Recomputing!",
                         kwargs['metric'], res_file)
 
     # relabel gt labels in case of binary mask per channel
@@ -215,7 +217,7 @@ def evaluate_file(res_file, gt_file, background=0,
         return evaluate_linear_sum_assignment(gt_labels, pred_labels, outFn,
                                               overlapping_inst,
                                               kwargs.get('filterSz', None),
-                                              out_vis=kwargs.get("out_vis", False))
+                                              visualize=kwargs.get("visualize", False))
 
     # get gt cell ids and the size of the corresponding cell
     gt_labels_list, gt_counts = np.unique(gt_labels, return_counts=True)
@@ -287,8 +289,6 @@ def evaluate_file(res_file, gt_file, background=0,
         dice = 2.0 * c / (gt_labels_count_dict[v] + pred_labels_count_dict[u])
         iou = c / (gt_labels_count_dict[v] + pred_labels_count_dict[u] - c)
 
-        # print("c %s gt_label %s num %s pred_label %s num %s dice %s iou %s"
-        # %(c,v,gt_labels_count_dict[v],u,pred_labels_count_dict[u],dice,iou))
         if c > 0.5 * gt_labels_count_dict[v]:
             seg = iou
         else:
@@ -507,7 +507,7 @@ def evaluate_file(res_file, gt_file, background=0,
 
 def evaluate_linear_sum_assignment(gt_labels, pred_labels, outFn,
                                    overlapping_inst=False, filterSz=None,
-                                   out_vis=False):
+                                   visualize=False):
     if filterSz is not None:
         ls, cs = np.unique(pred_labels, return_counts=True)
         pred_labels2 = np.copy(pred_labels)
@@ -515,8 +515,8 @@ def evaluate_linear_sum_assignment(gt_labels, pred_labels, outFn,
         for l, c in zip(ls, cs):
             if c < filterSz:
                 pred_labels[pred_labels==l] = 0
-            else:
-                pred_labels2[pred_labels==l] = 0
+            # else:
+            #     pred_labels2[pred_labels==l] = 0
         print(outFn)
         # with h5py.File(outFn + ".hdf", 'w') as f:
         #     f.create_dataset(
@@ -621,7 +621,7 @@ def evaluate_linear_sum_assignment(gt_labels, pred_labels, outFn,
         else:
             tp = 0
             fscore_cnt = 0
-        if tp > 0 and th == 0.5:
+        if visualize and tp > 0 and th == 0.5:
             vis_tp = np.zeros_like(gt_labels_rel, dtype=np.float32)
             vis_fp = np.zeros_like(gt_labels_rel, dtype=np.float32)
             vis_fn = np.zeros_like(gt_labels_rel, dtype=np.float32)
@@ -822,6 +822,8 @@ if __name__ == "__main__":
                         help="don't use Hungarian matching",
                         dest='use_linear_sum_assignment',
                         action="store_false")
+    parser.add_argument("--visualize", help="",
+                        action="store_true")
     parser.add_argument("--debug", help="",
                         action="store_true")
 
@@ -834,4 +836,4 @@ if __name__ == "__main__":
                   foreground_only=args.use_gt_fg,
                   background=args.background, res_key=args.res_key,
                   gt_key=args.gt_key, out_dir=args.out_dir, suffix=args.suffix,
-                  debug=args.debug)
+                  debug=args.debug, visualize=args.visualize)
