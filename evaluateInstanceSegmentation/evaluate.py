@@ -62,9 +62,39 @@ def maybe_crop(pred_labels, gt_labels, overlapping_inst=False):
         if gt_labels.shape[1:] == pred_labels.shape[1:]:
             return pred_labels, gt_labels
         else:
-            # todo: add other cases
-            raise NotImplementedError("Sorry, cropping for overlapping "
-                                      "instances not implemented yet!")
+            if gt_labels.shape == pred_labels.shape:
+                return pred_labels, gt_labels
+            if gt_labels.shape[-1] > pred_labels.shape[-1]:
+                bigger_arr = gt_labels
+                smaller_arr = pred_labels
+                swapped = False
+            else:
+                bigger_arr = pred_labels
+                smaller_arr = gt_labels
+                swapped = True
+
+            begin = (np.array(bigger_arr.shape[-2:]) -
+                     np.array(smaller_arr.shape[-2:])) // 2
+            end = np.array(bigger_arr.shape[-2:]) - begin
+            if (np.array(bigger_arr.shape[-2:]) -
+                np.array(smaller_arr.shape[-2:]))[-1] % 2 == 1:
+                end[-1] -= 1
+            if (np.array(bigger_arr.shape[-2:]) -
+                np.array(smaller_arr.shape[-2:]))[-2] % 2 == 1:
+                end[-2] -= 1
+            bigger_arr = bigger_arr[...,
+                                    begin[0]:end[0],
+                                    begin[1]:end[1]]
+            if not swapped:
+                gt_labels = bigger_arr
+                pred_labels = smaller_arr
+            else:
+                pred_labels = bigger_arr
+                gt_labels = smaller_arr
+            logger.debug("gt shape cropped %s", gt_labels.shape)
+            logger.debug("pred shape cropped %s", pred_labels.shape)
+
+            return pred_labels, gt_labels
     else:
         if gt_labels.shape == pred_labels.shape:
             return pred_labels, gt_labels
@@ -165,6 +195,11 @@ def evaluate_file(res_file, gt_file, background=0,
     pred_labels, gt_labels = maybe_crop(pred_labels, gt_labels,
                                         overlapping_inst)
 
+    logger.debug("prediction %s, shape %s", np.unique(pred_labels),
+                 pred_labels.shape)
+    logger.debug("gt %s, shape %s", np.unique(gt_labels),
+                 gt_labels.shape)
+
     # if pred_labels.shape[0] == 536:
     #     print(pred_labels.shape, gt_labels.shape)
     #     pred_labels = pred_labels[12:-12, 12:-12]
@@ -172,7 +207,10 @@ def evaluate_file(res_file, gt_file, background=0,
     #     print(pred_labels.shape, gt_labels.shape)
 
     if foreground_only:
-        pred_labels[gt_labels==0] = 0
+        try:
+            pred_labels[gt_labels==0] = 0
+        except IndexError:
+            pred_labels[:, np.any(gt_labels, axis=0).astype(np.int)==0] = 0
 
     logger.info("processing %s %s", res_file, gt_file)
     outFnBase = os.path.join(
@@ -485,9 +523,11 @@ def evaluate_file(res_file, gt_file, background=0,
         metrics.addMetric(tblname, "AP_TP", apTP)
         metrics.addMetric(tblname, "AP_FP", apFP)
         metrics.addMetric(tblname, "AP_FN", apFN)
-        ap = 1.*(apTP) / max(1, apTP + apFN + apFP)
-        aps.append(ap)
-        metrics.addMetric(tblname, "AP", ap)
+        p = 1.*(apTP) / max(1, apTP +  apFP)
+        rec = 1.*(apTP) / max(1, apTP +  apFN)
+        aps.append(p*rec)
+        metrics.addMetric(tblname, "AP", p*rec)
+
         precision = 1.*(apTP) / max(1, len(pred_labels_list))
         metrics.addMetric(tblname, "precision", precision)
         recall = 1.*(apTP) / max(1, len(gt_labels_list))
@@ -523,7 +563,7 @@ def evaluate_linear_sum_assignment(gt_labels, pred_labels, outFn,
         #         'volumes/small_inst',
         #         data=pred_labels2,
         #         compression='gzip')
-    pred_labels_rel, _, _ = relabel_sequential(pred_labels)
+    pred_labels_rel, _, _ = relabel_sequential(pred_labels.astype(np.int))
     gt_labels_rel, _, _ = relabel_sequential(gt_labels)
 
     if overlapping_inst:
@@ -743,9 +783,12 @@ def evaluate_linear_sum_assignment(gt_labels, pred_labels, outFn,
         metrics.addMetric(tblname, "AP_TP", tp)
         metrics.addMetric(tblname, "AP_FP", fp)
         metrics.addMetric(tblname, "AP_FN", fn)
-        ap = tp / max(1, tp + fn + fp)
-        aps.append(ap)
-        metrics.addMetric(tblname, "AP", ap)
+
+        p = 1.*(tp) / max(1, tp +  fp)
+        rec = 1.*(tp) / max(1, tp +  fn)
+        aps.append(p*rec)
+        metrics.addMetric(tblname, "AP", p*rec)
+
         precision = tp / max(1, tp + fp)
         metrics.addMetric(tblname, "precision", precision)
         recall = tp / max(1, tp + fn)
@@ -758,7 +801,7 @@ def evaluate_linear_sum_assignment(gt_labels, pred_labels, outFn,
 
     avAP19 = np.mean(aps)
     avAP59 = np.mean(aps[4:])
-    metrics.addMetric("confusion_matrix", "avAP", avAP19)
+    metrics.addMetric("confusion_matrix", "avAP", avAP59)
     metrics.addMetric("confusion_matrix", "avAP59", avAP59)
     metrics.addMetric("confusion_matrix", "avAP19", avAP19)
 
