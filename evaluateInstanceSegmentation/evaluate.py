@@ -12,6 +12,7 @@ from skimage.segmentation import relabel_sequential
 import tifffile
 import toml
 import zarr
+from skimage.morphology import skeletonize, skeletonize_3d
 
 logger = logging.getLogger(__name__)
 
@@ -166,10 +167,13 @@ def evaluate_file(res_file, gt_file, background=0,
         raise NotImplementedError("invalid file format %s", gt_file)
     logger.debug("gt min %f, max %f, shape %s", np.min(gt_labels),
                  np.max(gt_labels), gt_labels.shape)
-    if gt_labels.shape[0] == 1:
+    
+    # check: what if there are only one gt instance in overlapping_inst scenario?
+    keep_gt_shape = kwargs.get("keep_gt_shape", False)
+    if gt_labels.shape[0] == 1 and not keep_gt_shape:
         gt_labels.shape = gt_labels.shape[1:]
     gt_labels = np.squeeze(gt_labels)
-    if gt_labels.ndim > pred_labels.ndim:
+    if gt_labels.ndim > pred_labels.ndim and not keep_gt_shape:
         gt_labels = np.max(gt_labels, axis=0)
     # check if pred.dim < gt.dim
     # if pred_labels.ndim < gt_labels.ndim:
@@ -192,13 +196,34 @@ def evaluate_file(res_file, gt_file, background=0,
 
     # heads up: should not crop channel dimensions, assuming channels first
     overlapping_inst = kwargs.get('overlapping_inst', False)
-    pred_labels, gt_labels = maybe_crop(pred_labels, gt_labels,
-                                        overlapping_inst)
+    if not keep_gt_shape:
+        pred_labels, gt_labels = maybe_crop(pred_labels, gt_labels,
+                                            overlapping_inst)
+    else:
+        print("debug: ", pred_labels.ndim, gt_labels.ndim, pred_labels.shape, gt_labels.shape)
+        if pred_labels.shape[0] < gt_labels.shape[1]:
+            print("duplicate last frame")
+            print(pred_labels.shape)
+            pred_labels = np.concatenate(
+                    [pred_labels,
+                        np.reshape(pred_labels[-1], 
+                            (1, pred_labels.shape[1], pred_labels.shape[2]))])
+            print(pred_labels.shape)
 
+        if pred_labels.ndim < gt_labels.ndim:
+            pred_labels = np.expand_dims(pred_labels, axis=0)
+            pred_labels, gt_labels = maybe_crop(pred_labels, gt_labels, True)
+            pred_labels = np.squeeze(pred_labels)
     logger.debug("prediction %s, shape %s", np.unique(pred_labels),
                  pred_labels.shape)
     logger.debug("gt %s, shape %s", np.unique(gt_labels),
                  gt_labels.shape)
+
+    rm_sm_comp = kwargs.get("remove_small_components", None) 
+    if rm_sm_comp is not None and rm_sm_comp > 0:
+        pred_labels = remove_small_components(pred_labels, rm_sm_comp)
+        logger.debug("prediction %s, shape %s", np.unique(pred_labels),
+                     pred_labels.shape)
 
     # if pred_labels.shape[0] == 536:
     #     print(pred_labels.shape, gt_labels.shape)
@@ -252,10 +277,14 @@ def evaluate_file(res_file, gt_file, background=0,
             gt_labels[i] = gt_labels[i] * (i + 1)
 
     if kwargs.get('use_linear_sum_assignment'):
-        return evaluate_linear_sum_assignment(gt_labels, pred_labels, outFn,
-                                              overlapping_inst,
-                                              kwargs.get('filterSz', None),
-                                              visualize=kwargs.get("visualize", False))
+        return evaluate_linear_sum_assignment(
+                gt_labels, pred_labels, outFn,
+                overlapping_inst,
+                kwargs.get('filterSz', None),
+                visualize=kwargs.get("visualize", False),
+                localization_criterion=kwargs.get("localization_criterion", "iou"),
+                partly=kwargs.get("partly", False)
+                )
 
     # get gt cell ids and the size of the corresponding cell
     gt_labels_list, gt_counts = np.unique(gt_labels, return_counts=True)
@@ -547,7 +576,8 @@ def evaluate_file(res_file, gt_file, background=0,
 
 def evaluate_linear_sum_assignment(gt_labels, pred_labels, outFn,
                                    overlapping_inst=False, filterSz=None,
-                                   visualize=False):
+                                   visualize=False, localization_criterion="iou",
+                                   partly=False):
     if filterSz is not None:
         ls, cs = np.unique(pred_labels, return_counts=True)
         pred_labels2 = np.copy(pred_labels)
@@ -563,49 +593,12 @@ def evaluate_linear_sum_assignment(gt_labels, pred_labels, outFn,
         #         'volumes/small_inst',
         #         data=pred_labels2,
         #         compression='gzip')
+    
+    # relabel labels sequentially
     pred_labels_rel, _, _ = relabel_sequential(pred_labels.astype(np.int))
     gt_labels_rel, _, _ = relabel_sequential(gt_labels)
 
-    if overlapping_inst:
-        pred_tile = [1, ] * pred_labels_rel.ndim
-        pred_tile[0] = gt_labels_rel.shape[0]
-        gt_tile = [1, ] * gt_labels_rel.ndim
-        gt_tile[1] = pred_labels_rel.shape[0]
-        pred_tiled = np.tile(pred_labels_rel, pred_tile).flatten()
-        gt_tiled = np.tile(gt_labels_rel, gt_tile).flatten()
-        mask = np.logical_or(pred_tiled > 0, gt_tiled > 0)
-        overlay = np.array([
-            pred_tiled[mask],
-            gt_tiled[mask]
-        ])
-        overlay_labels, overlay_labels_counts = np.unique(
-            overlay, return_counts=True, axis=1)
-        overlay_labels = np.transpose(overlay_labels)
-    else:
-        overlay = np.array([pred_labels_rel.flatten(),
-                            gt_labels_rel.flatten()])
-        logger.debug("overlay shape relabeled %s", overlay.shape)
-        # get overlaying cells and the size of the overlap
-        overlay_labels, overlay_labels_counts = np.unique(
-            overlay, return_counts=True, axis=1)
-        overlay_labels = np.transpose(overlay_labels)
-
-    # get gt cell ids and the size of the corresponding cell
-    gt_labels_list, gt_counts = np.unique(gt_labels_rel, return_counts=True)
-    gt_labels_count_dict = {}
-    logger.debug("%s %s", gt_labels_list, gt_counts)
-    for (l,c) in zip(gt_labels_list, gt_counts):
-        gt_labels_count_dict[l] = c
-
-    # get pred cell ids
-    pred_labels_list, pred_counts = np.unique(pred_labels_rel,
-                                              return_counts=True)
-    logger.debug("%s %s", pred_labels_list, pred_counts)
-
-    pred_labels_count_dict = {}
-    for (l,c) in zip(pred_labels_list, pred_counts):
-        pred_labels_count_dict[l] = c
-
+    # get number of labels
     num_pred_labels = int(np.max(pred_labels_rel))
     num_gt_labels = int(np.max(gt_labels_rel))
     num_matches = min(num_gt_labels, num_pred_labels)
@@ -617,15 +610,75 @@ def evaluate_linear_sum_assignment(gt_labels, pred_labels, outFn,
                        dtype=np.float32)
     fscoreMat = np.zeros((num_gt_labels+1, num_pred_labels+1),
                          dtype=np.float32)
+    
+    # get localization criterion
+    if localization_criterion == "iou":
+        logger.debug("evaluate iou localization_criterion")
+        if overlapping_inst:
+            pred_tile = [1, ] * pred_labels_rel.ndim
+            pred_tile[0] = gt_labels_rel.shape[0]
+            gt_tile = [1, ] * gt_labels_rel.ndim
+            gt_tile[1] = pred_labels_rel.shape[0]
+            pred_tiled = np.tile(pred_labels_rel, pred_tile).flatten()
+            gt_tiled = np.tile(gt_labels_rel, gt_tile).flatten()
+            mask = np.logical_or(pred_tiled > 0, gt_tiled > 0)
+            overlay = np.array([
+                pred_tiled[mask],
+                gt_tiled[mask]
+            ])
+            overlay_labels, overlay_labels_counts = np.unique(
+                overlay, return_counts=True, axis=1)
+            overlay_labels = np.transpose(overlay_labels)
+        else:
+            overlay = np.array([pred_labels_rel.flatten(),
+                                gt_labels_rel.flatten()])
+            logger.debug("overlay shape relabeled %s", overlay.shape)
+            # get overlaying cells and the size of the overlap
+            overlay_labels, overlay_labels_counts = np.unique(
+                overlay, return_counts=True, axis=1)
+            overlay_labels = np.transpose(overlay_labels)
 
-    for (u,v), c in zip(overlay_labels, overlay_labels_counts):
-        iou = c / (gt_labels_count_dict[v] + pred_labels_count_dict[u] - c)
+        # get gt cell ids and the size of the corresponding cell
+        gt_labels_list, gt_counts = np.unique(gt_labels_rel, return_counts=True)
+        gt_labels_count_dict = {}
+        logger.debug("%s %s", gt_labels_list, gt_counts)
+        for (l,c) in zip(gt_labels_list, gt_counts):
+            gt_labels_count_dict[l] = c
 
-        iouMat[v, u] = iou
-        recallMat[v, u] = c / gt_labels_count_dict[v]
-        precMat[v, u] = c / pred_labels_count_dict[u]
-        fscoreMat[v, u] = 2 * (precMat[v, u] * recallMat[v, u]) / \
-                              (precMat[v, u] + recallMat[v, u])
+        # get pred cell ids
+        pred_labels_list, pred_counts = np.unique(pred_labels_rel,
+                                                  return_counts=True)
+        logger.debug("%s %s", pred_labels_list, pred_counts)
+        pred_labels_count_dict = {}
+        for (l,c) in zip(pred_labels_list, pred_counts):
+            pred_labels_count_dict[l] = c
+
+        for (u,v), c in zip(overlay_labels, overlay_labels_counts):
+            iou = c / (gt_labels_count_dict[v] + pred_labels_count_dict[u] - c)
+
+            iouMat[v, u] = iou
+            recallMat[v, u] = c / gt_labels_count_dict[v]
+            precMat[v, u] = c / pred_labels_count_dict[u]
+            fscoreMat[v, u] = 2 * (precMat[v, u] * recallMat[v, u]) / \
+                                  (precMat[v, u] + recallMat[v, u])
+
+    elif localization_criterion == "cldice":
+        logger.debug("evaluate cldice localization_criterion")
+
+        cl_prec = get_centerline_overlap(
+                pred_labels_rel, gt_labels_rel,
+                np.zeros((num_pred_labels + 1, num_gt_labels + 1), dtype=np.float32))
+        cl_recall = get_centerline_overlap(
+                gt_labels_rel, pred_labels_rel,
+                np.zeros((num_gt_labels + 1, num_pred_labels + 1), dtype=np.float32))
+        
+        cl_prec = np.transpose(cl_prec)
+        iouMat = np.nan_to_num(2 * cl_prec * cl_recall / (cl_prec + cl_recall))
+        cl_prec = np.transpose(cl_prec)
+        
+    else:
+        raise NotImplementedError
+    
     iouMat = iouMat[1:, 1:]
     recallMat = recallMat[1:, 1:]
     precMat = precMat[1:, 1:]
@@ -637,6 +690,11 @@ def evaluate_linear_sum_assignment(gt_labels, pred_labels, outFn,
     metrics.addMetric(tblNameGen, "Num GT", num_gt_labels)
     metrics.addMetric(tblNameGen, "Num Pred", num_pred_labels)
 
+    if localization_criterion == "cldice":
+        gt_skel_coverage = np.sum(cl_recall[1:, 1:], axis=1)
+        gt_skel_coverage = np.mean(gt_skel_coverage)
+        metrics.addMetric(tblNameGen, "avg_gt_skel_coverage", gt_skel_coverage)
+
     ths = [0.1, 0.2, 0.3, 0.4, 0.5, 0.55, 0.6, 0.65, 0.7, 0.75, 0.8, 0.85, 0.9, 0.95]
     aps = []
     metrics.addTable("confusion_matrix")
@@ -644,6 +702,8 @@ def evaluate_linear_sum_assignment(gt_labels, pred_labels, outFn,
         tblname = "confusion_matrix.th_"+str(th).replace(".", "_")
         metrics.addTable(tblname)
         fscore = 0
+        pred_ind_ok = []
+        gt_ind_ok = []
         if num_matches > 0 and np.max(iouMat) > th:
             costs = -(iouMat >= th).astype(float) - iouMat / (2*num_matches)
             logger.info("start computing lin sum assign for th %s (%s)",
@@ -655,12 +715,19 @@ def evaluate_linear_sum_assignment(gt_labels, pred_labels, outFn,
             fscore_cnt = 0
             for idx, match in enumerate(match_ok):
                 if match:
+                    pred_ind_ok.append(pred_ind[idx])
+                    gt_ind_ok.append(gt_ind[idx])
                     fscore = fscoreMat[gt_ind[idx], pred_ind[idx]]
                     if fscore >= 0.8:
                         fscore_cnt += 1
+            # correct indices to include background
+            pred_ind_ok = np.array(pred_ind_ok) + 1
+            gt_ind_ok = np.array(gt_ind_ok) + 1
         else:
             tp = 0
             fscore_cnt = 0
+        
+        # todo: visualize into own sub
         if visualize and tp > 0 and th == 0.5:
             vis_tp = np.zeros_like(gt_labels_rel, dtype=np.float32)
             vis_fp = np.zeros_like(gt_labels_rel, dtype=np.float32)
@@ -798,6 +865,35 @@ def evaluate_linear_sum_assignment(gt_labels, pred_labels, outFn,
         else:
             fscore = 0.0
         metrics.addMetric(tblname, 'fscore', fscore)
+        
+        # report false split and false merge and tp skeleton coverage
+        #if kwargs.get("false_split_thresh") ?
+        if localization_criterion == "cldice":
+            pred_ind_all = np.arange(1, num_pred_labels + 1)
+            pred_ind_unassigned = pred_ind_all[np.isin(pred_ind_all, pred_ind_ok, invert=True)]
+            # count all unassigned pred labels which maximal overlap label 
+            # is not background as false split
+            false_split = np.sum(np.argmax(cl_prec[pred_ind_unassigned], axis=1) > 0)
+            metrics.addMetric(tblname, "false_split", int(false_split))
+            
+            # todo: handle overlaps, define threshold
+            #gt_ind_all = np.arange(1, num_gt_labels + 1)
+            #gt_ind_unassigned = gt_ind_all[np.isin(gt_ind_all, gt_ind_ok, invert=True)]
+            #false_merge = np.sum(np.any(cl_recall[gt_ind_unassigned, 1:] > 0.1, axis=1))
+            fm = np.sum(cl_recall[1:, 1:] > th, axis=0)
+            fm_bg = (cl_prec[1:, 0] > 0.1).astype(np.uint8)
+            fm_bg[fm <= 0] = 0
+            false_merge = np.sum(np.maximum(
+                    [0] * num_pred_labels,
+                    fm + fm_bg - 1
+                    ))
+            metrics.addMetric(tblname, "false_merge", int(false_merge))
+            
+            if tp > 0:
+                tp_skel_coverage = np.mean(np.sum(cl_recall[gt_ind_ok, 1:], axis=1))
+            else:
+                tp_skel_coverage = 0
+            metrics.addMetric(tblname, "avg_tp_skel_coverage", tp_skel_coverage)
 
     avAP19 = np.mean(aps)
     avAP59 = np.mean(aps[4:])
@@ -830,6 +926,69 @@ def set_boundary(labels_rel, label, target):
         border_value=1)
     bnd = np.logical_xor(tmp, eroded_tmp)
     target[max_z][bnd] = 1
+
+
+def replace(array, old_values, new_values):
+    values_map = np.arange(int(array.max() + 1), dtype=new_values.dtype)
+    values_map[old_values] = new_values
+
+    return values_map[array]
+
+
+def remove_small_components(array, size=0):
+
+    labels, counts = np.unique(array, return_counts=True)
+    small_labels = labels[counts <= size]
+
+    array = replace(
+        array,
+        np.array(small_labels),
+        np.array([0] * len(small_labels))
+    )
+    return array
+
+
+def get_centerline_overlap(skeletonize, compare, match):
+    skeleton_one_inst_per_channel = True if skeletonize.ndim == 4 else False
+    compare_one_inst_per_channel = True if compare.ndim == 4 else False
+    
+    if compare_one_inst_per_channel:
+        fg = np.max(compare > 0, axis=0).astype(np.uint8)
+
+    labels, labels_cnt = np.unique(
+        skeletonize[skeletonize > 0],
+        return_counts=True
+    )
+    
+    for label, label_count in zip(labels, labels_cnt):
+        if skeleton_one_inst_per_channel:
+            #idx = np.unravel_index(np.argmax(mask), mask.shape)[0]
+            mask = skeletonize[label - 1] #heads up: assuming increasing labels
+        else:
+            mask = skeletonize == label
+        skeleton = skeletonize_3d(mask) > 0
+        skeleton_size = np.sum(skeleton)
+
+        # if one instance per channel for compare, we need to correct bg label
+        if compare_one_inst_per_channel:
+            compare_fg, compare_fg_cnt = np.unique(
+                    fg[skeleton], return_counts=True)
+            if np.any(compare_fg > 0):
+                compare_label, compare_label_cnt = np.unique(
+                    compare[:, skeleton], return_counts=True)
+                if np.any(compare_label == 0):
+                    compare_label[0] = compare_fg[0]
+                    compare_label_cnt[0] = compare_fg_cnt[0]
+            else:
+                compare_label = compare_fg
+                compare_label_cnt = compare_fg_cnt
+        else:
+            compare_label, compare_label_cnt = np.unique(
+                compare[skeleton], return_counts=True)
+        ratio = compare_label_cnt / float(skeleton_size)
+        match[label, compare_label] = ratio
+
+    return match
 
 
 if __name__ == "__main__":
