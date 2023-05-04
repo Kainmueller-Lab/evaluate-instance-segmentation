@@ -13,10 +13,35 @@ import tifffile
 import toml
 import zarr
 from skimage.morphology import skeletonize, skeletonize_3d
+from skimage import io
+#from pylab import cm
+import pdb
 
 logger = logging.getLogger(__name__)
 
 
+vis_cmap = [
+        [ 49, 130, 189],
+        [230,  85,  13],
+        [ 49, 163,  84],
+        [117, 107, 177],
+        #[99, 99, 99],
+        [107, 174, 214],
+        [253, 141,  60],
+        [116, 196, 118],
+        [158, 154, 200],
+        #[150, 150, 150],
+        [158, 202, 225],
+        [253, 174, 107],
+        [161, 217, 155],
+        [188, 189, 220],
+        #[189, 189, 189],
+        [198, 219, 239],
+        [253, 208, 162],
+        [199, 233, 192],
+        [218, 218, 235],
+        #[217, 217, 217]
+        ]
 class Metrics:
     def __init__(self, fn):
         self.metricsDict = {}
@@ -200,6 +225,7 @@ def evaluate_file(res_file, gt_file, background=0,
         pred_labels, gt_labels = maybe_crop(pred_labels, gt_labels,
                                             overlapping_inst)
     else:
+        # todo: take out duplicate last frame, should be done beforehand
         print("debug: ", pred_labels.ndim, gt_labels.ndim, pred_labels.shape, gt_labels.shape)
         if pred_labels.shape[0] < gt_labels.shape[1]:
             print("duplicate last frame")
@@ -283,7 +309,9 @@ def evaluate_file(res_file, gt_file, background=0,
                 kwargs.get('filterSz', None),
                 visualize=kwargs.get("visualize", False),
                 localization_criterion=kwargs.get("localization_criterion", "iou"),
-                partly=kwargs.get("partly", False)
+                partly=kwargs.get("partly", False),
+                visualize_type=kwargs.get("visualize_type", "nuclei"),
+                greedy_by_score=kwargs.get("greedy_by_score", False)
                 )
 
     # get gt cell ids and the size of the corresponding cell
@@ -577,7 +605,8 @@ def evaluate_file(res_file, gt_file, background=0,
 def evaluate_linear_sum_assignment(gt_labels, pred_labels, outFn,
                                    overlapping_inst=False, filterSz=None,
                                    visualize=False, localization_criterion="iou",
-                                   partly=False):
+                                   partly=False, visualize_type="nuclei",
+                                   greedy_by_score=False):
     if filterSz is not None:
         ls, cs = np.unique(pred_labels, return_counts=True)
         pred_labels2 = np.copy(pred_labels)
@@ -672,6 +701,19 @@ def evaluate_linear_sum_assignment(gt_labels, pred_labels, outFn,
                 gt_labels_rel, pred_labels_rel,
                 np.zeros((num_gt_labels + 1, num_pred_labels + 1), dtype=np.float32))
         
+        # get cl_recall without overlapping gt labels for false merge calculation later on
+        gt_labels_rel_wo_overlap = None
+        cl_recall_wo_overlap = None
+        if gt_labels_rel.ndim == 4:
+            mask = np.sum(gt_labels_rel > 0, axis=0) > 1
+            if np.sum(mask) > 0:
+                pdb.set_trace()
+                gt_labels_rel_wo_overlap = gt_labels_rel
+                gt_labels_rel_wo_overlap[mask] = 0
+                cl_recall_wo_overlap = get_centerline_overlap(
+                        gt_labels_rel_wo_overlap, pred_labels_rel,
+                        np.zeros((num_gt_labels + 1, num_pred_labels + 1), dtype=np.float32))
+        
         cl_prec = np.transpose(cl_prec)
         iouMat = np.nan_to_num(2 * cl_prec * cl_recall / (cl_prec + cl_recall))
         cl_prec = np.transpose(cl_prec)
@@ -691,11 +733,16 @@ def evaluate_linear_sum_assignment(gt_labels, pred_labels, outFn,
     metrics.addMetric(tblNameGen, "Num Pred", num_pred_labels)
 
     if localization_criterion == "cldice":
+        # get gt skeleton coverage, 
+        # todo: only take max gt label for each pred label to not count pred labels 
+        # twice for overlapping gt instances
+        #np.argmax(cl_prec[pred_ind_unassigned], axis=1)
         gt_skel_coverage = np.sum(cl_recall[1:, 1:], axis=1)
         gt_skel_coverage = np.mean(gt_skel_coverage)
         metrics.addMetric(tblNameGen, "avg_gt_skel_coverage", gt_skel_coverage)
 
     ths = [0.1, 0.2, 0.3, 0.4, 0.5, 0.55, 0.6, 0.65, 0.7, 0.75, 0.8, 0.85, 0.9, 0.95]
+    #ths = [0.3]
     aps = []
     metrics.addTable("confusion_matrix")
     for th in ths:
@@ -704,146 +751,63 @@ def evaluate_linear_sum_assignment(gt_labels, pred_labels, outFn,
         fscore = 0
         pred_ind_ok = []
         gt_ind_ok = []
+        fp_ind = None
+        fn_ind = None
+        false_split_ind = []
         if num_matches > 0 and np.max(iouMat) > th:
-            costs = -(iouMat >= th).astype(float) - iouMat / (2*num_matches)
-            logger.info("start computing lin sum assign for th %s (%s)",
-                        th, outFn)
-            gt_ind, pred_ind = linear_sum_assignment(costs)
-            assert num_matches == len(gt_ind) == len(pred_ind)
-            match_ok = iouMat[gt_ind, pred_ind] >= th
-            tp = np.count_nonzero(match_ok)
             fscore_cnt = 0
-            for idx, match in enumerate(match_ok):
-                if match:
-                    pred_ind_ok.append(pred_ind[idx])
-                    gt_ind_ok.append(gt_ind[idx])
-                    fscore = fscoreMat[gt_ind[idx], pred_ind[idx]]
-                    if fscore >= 0.8:
-                        fscore_cnt += 1
+            if greedy_by_score == False:
+                costs = -(iouMat >= th).astype(float) - iouMat / (2*num_matches)
+                logger.info("start computing lin sum assign for th %s (%s)",
+                            th, outFn)
+                gt_ind, pred_ind = linear_sum_assignment(costs)
+                assert num_matches == len(gt_ind) == len(pred_ind)
+                match_ok = iouMat[gt_ind, pred_ind] >= th
+                tp = np.count_nonzero(match_ok)
+                for idx, match in enumerate(match_ok):
+                    if match:
+                        pred_ind_ok.append(pred_ind[idx])
+                        gt_ind_ok.append(gt_ind[idx])
+                        fscore = fscoreMat[gt_ind[idx], pred_ind[idx]]
+                        if fscore >= 0.8:
+                            fscore_cnt += 1
+            else:
+                gt_ind, pred_ind = np.nonzero(iouMat > 0) # > th)
+                ious = iouMat[gt_ind, pred_ind]
+                # sort iou values in descending order
+                sort = np.flip(np.argsort(ious))
+                gt_ind = gt_ind[sort]
+                pred_ind = pred_ind[sort]
+                ious = ious[sort]
+                
+                # assign greedy by iou score
+                for gt_idx, pred_idx, iou in zip(gt_ind, pred_ind, ious):
+                    if gt_idx not in gt_ind_ok and pred_idx not in pred_ind_ok and iou > th:
+                        gt_ind_ok.append(gt_idx)
+                        pred_ind_ok.append(pred_idx)
+                    # if gt labels is already assinged, count pred label as false split
+                    elif gt_idx in gt_ind_ok and pred_idx not in pred_ind_ok \
+                            and pred_idx not in false_split_ind:
+                        false_split_ind.append(pred_idx)
+                # get fn (unassigned gt_ind)
+                gt_ind_all = np.arange(1, num_gt_labels + 1)
+                fn_ind = gt_ind_all[np.isin(gt_ind_all, gt_ind_ok, invert=True)]
+
+                # get fp (unassigned pred_ind)
+                pred_ind_all = np.arange(1, num_pred_labels + 1)
+                fp_ind = pred_ind_all[np.isin(pred_ind_all, 
+                    np.concatenate([pred_ind_ok, false_split_ind]), invert=True)]
+
+                print(pred_ind_ok, gt_ind_ok, fp_ind, fn_ind, false_split_ind)
+                tp = len(pred_ind_ok)
+            
             # correct indices to include background
             pred_ind_ok = np.array(pred_ind_ok) + 1
-            gt_ind_ok = np.array(gt_ind_ok) + 1
+            gt_ind_ok = np.array(gt_ind_ok) + 1    
         else:
             tp = 0
             fscore_cnt = 0
         
-        # todo: visualize into own sub
-        if visualize and tp > 0 and th == 0.5:
-            vis_tp = np.zeros_like(gt_labels_rel, dtype=np.float32)
-            vis_fp = np.zeros_like(gt_labels_rel, dtype=np.float32)
-            vis_fn = np.zeros_like(gt_labels_rel, dtype=np.float32)
-            vis_tp_seg = np.zeros_like(gt_labels_rel, dtype=np.float32)
-            vis_tp_seg2 = np.zeros_like(gt_labels_rel, dtype=np.float32)
-            vis_fp_seg = np.zeros_like(gt_labels_rel, dtype=np.float32)
-            vis_fn_seg = np.zeros_like(gt_labels_rel, dtype=np.float32)
-            if len(gt_labels_rel.shape) == 3:
-                vis_fp_seg_bnd = np.zeros_like(gt_labels_rel, dtype=np.float32)
-                vis_fn_seg_bnd = np.zeros_like(gt_labels_rel, dtype=np.float32)
-
-            cntrs_gt = scipy.ndimage.measurements.center_of_mass(
-                gt_labels_rel > 0,
-                gt_labels_rel, sorted(list(np.unique(gt_labels_rel)))[1:])
-            cntrs_pred = scipy.ndimage.measurements.center_of_mass(
-                pred_labels_rel > 0,
-                pred_labels_rel, sorted(list(np.unique(pred_labels_rel)))[1:])
-            sz = 1
-            for gti, pi, in zip(gt_ind, pred_ind):
-                if iouMat[gti, pi] < th:
-                    vis_fn_seg[gt_labels_rel == gti+1] = 1
-                    if len(gt_labels_rel.shape) == 3:
-                        set_boundary(gt_labels_rel, gti+1,
-                                     vis_fn_seg_bnd)
-                    vis_fp_seg[pred_labels_rel == pi+1] = 1
-                    if len(gt_labels_rel.shape) == 3:
-                        set_boundary(pred_labels_rel, pi+1,
-                                     vis_fp_seg_bnd)
-                    cntr = cntrs_gt[gti]
-                    if len(gt_labels_rel.shape) == 3:
-                        vis_fn[int(cntr[0]), int(cntr[1]), int(cntr[2])] = 1
-                    else:
-                        vis_fn[int(cntr[0]), int(cntr[1])] = 1
-                    cntr = cntrs_pred[pi]
-                    if len(gt_labels_rel.shape) == 3:
-                        vis_fp[int(cntr[0]), int(cntr[1]), int(cntr[2])] = 1
-                    else:
-                        vis_fp[int(cntr[0]), int(cntr[1])] = 1
-                else:
-                    vis_tp_seg[gt_labels_rel == gti+1] = 1
-                    cntr = cntrs_gt[gti]
-                    if len(gt_labels_rel.shape) == 3:
-                        vis_tp[int(cntr[0]), int(cntr[1]), int(cntr[2])] = 1
-                    else:
-                        vis_tp[int(cntr[0]), int(cntr[1])] = 1
-                    vis_tp_seg2[pred_labels_rel == pi+1] = 1
-            vis_tp = scipy.ndimage.gaussian_filter(vis_tp, sz, truncate=sz)
-            for gti in range(num_gt_labels):
-                if gti in gt_ind:
-                    continue
-                vis_fn_seg[gt_labels_rel == gti+1] = 1
-                if len(gt_labels_rel.shape) == 3:
-                    set_boundary(gt_labels_rel, gti+1,
-                                 vis_fn_seg_bnd)
-                cntr = cntrs_gt[gti]
-                if len(gt_labels_rel.shape) == 3:
-                    vis_fn[int(cntr[0]), int(cntr[1]), int(cntr[2])] = 1
-                else:
-                    vis_fn[int(cntr[0]), int(cntr[1])] = 1
-            vis_fn = scipy.ndimage.gaussian_filter(vis_fn, sz, truncate=sz)
-            for pi in range(num_pred_labels):
-                if pi in pred_ind:
-                    continue
-                vis_fp_seg[pred_labels_rel == pi+1] = 1
-                if len(gt_labels_rel.shape) == 3:
-                    set_boundary(pred_labels_rel, pi+1,
-                                 vis_fp_seg_bnd)
-                cntr = cntrs_pred[pi]
-                if len(gt_labels_rel.shape) == 3:
-                    vis_fp[int(cntr[0]), int(cntr[1]), int(cntr[2])] = 1
-                else:
-                    vis_fp[int(cntr[0]), int(cntr[1])] = 1
-            vis_fp = scipy.ndimage.gaussian_filter(vis_fp, sz, truncate=sz)
-            vis_tp = vis_tp/np.max(vis_tp)
-            vis_fp = vis_fp/np.max(vis_fp)
-            vis_fn = vis_fn/np.max(vis_fn)
-            with h5py.File(outFn + "_vis.hdf", 'w') as fi:
-                fi.create_dataset(
-                    'volumes/vis_tp',
-                    data=vis_tp,
-                    compression='gzip')
-                fi.create_dataset(
-                    'volumes/vis_fp',
-                    data=vis_fp,
-                    compression='gzip')
-                fi.create_dataset(
-                    'volumes/vis_fn',
-                    data=vis_fn,
-                    compression='gzip')
-                fi.create_dataset(
-                    'volumes/vis_tp_seg',
-                    data=vis_tp_seg,
-                    compression='gzip')
-                fi.create_dataset(
-                    'volumes/vis_tp_seg2',
-                    data=vis_tp_seg2,
-                    compression='gzip')
-                fi.create_dataset(
-                    'volumes/vis_fp_seg',
-                    data=vis_fp_seg,
-                    compression='gzip')
-                fi.create_dataset(
-                    'volumes/vis_fn_seg',
-                    data=vis_fn_seg,
-                    compression='gzip')
-                if len(gt_labels_rel.shape) == 3:
-                    fi.create_dataset(
-                        'volumes/vis_fp_seg_bnd',
-                        data=vis_fp_seg_bnd,
-                        compression='gzip')
-                    fi.create_dataset(
-                        'volumes/vis_fn_seg_bnd',
-                        data=vis_fn_seg_bnd,
-                        compression='gzip')
-
         metrics.addMetric(tblname, "Fscore_cnt", fscore_cnt)
         fp = num_pred_labels - tp
         fn = num_gt_labels - tp
@@ -869,20 +833,43 @@ def evaluate_linear_sum_assignment(gt_labels, pred_labels, outFn,
         # report false split and false merge and tp skeleton coverage
         #if kwargs.get("false_split_thresh") ?
         if localization_criterion == "cldice":
-            pred_ind_all = np.arange(1, num_pred_labels + 1)
-            pred_ind_unassigned = pred_ind_all[np.isin(pred_ind_all, pred_ind_ok, invert=True)]
-            # count all unassigned pred labels which maximal overlap label 
-            # is not background as false split
-            false_split = np.sum(np.argmax(cl_prec[pred_ind_unassigned], axis=1) > 0)
+            if fp_ind is None:
+                pred_ind_all = np.arange(1, num_pred_labels + 1)
+                pred_ind_unassigned = pred_ind_all[np.isin(
+                    pred_ind_all, pred_ind_ok, invert=True)]
+                # count all unassigned pred labels which maximal overlap label 
+                # is not background as false split
+                fp_ind = pred_ind_unassigned[np.argmax(
+                    cl_prec[pred_ind_unassigned], axis=1) == 0]
+                false_split_ind = pred_ind_unassigned[
+                        np.argmax(cl_prec[pred_ind_unassigned], axis=1) > 0]
+            false_split = len(false_split_ind)
             metrics.addMetric(tblname, "false_split", int(false_split))
+
+            # get false negative indices
+            if fn_ind is None:
+                gt_ind_all = np.arange(1, num_gt_labels + 1)
+                gt_ind_unassigned = gt_ind_all[np.isin(gt_ind_all, gt_ind_ok, invert=True)]
+                fn_ind = gt_ind_unassigned
             
-            # todo: handle overlaps, define threshold
+            # get false merges
             #gt_ind_all = np.arange(1, num_gt_labels + 1)
             #gt_ind_unassigned = gt_ind_all[np.isin(gt_ind_all, gt_ind_ok, invert=True)]
             #false_merge = np.sum(np.any(cl_recall[gt_ind_unassigned, 1:] > 0.1, axis=1))
-            fm = np.sum(cl_recall[1:, 1:] > th, axis=0)
+            if gt_labels_rel.ndim == 4 and cl_recall_wo_overlap is not None:
+                fm = np.sum(cl_recall[1:, 1:] > th, axis=0)
+            else:
+                fm = np.sum(cl_recall[1:, 1:] > th, axis=0) 
             fm_bg = (cl_prec[1:, 0] > 0.1).astype(np.uint8)
             fm_bg[fm <= 0] = 0
+            fm_pred_ind = np.array(np.nonzero(
+                np.maximum([0] * num_pred_labels, fm + fm_bg - 1) > 0)[0])
+            fm_pred_ind += 1
+
+            if gt_labels_rel.ndim == 4 and cl_recall_wo_overlap is not None:
+                fm_gt_ind = np.nonzero(cl_recall_wo_overlap[:, fm_pred_ind] > th)[0]
+            else:
+                fm_gt_ind = np.nonzero(cl_recall[:, fm_pred_ind] > th)[0]
             false_merge = np.sum(np.maximum(
                     [0] * num_pred_labels,
                     fm + fm_bg - 1
@@ -895,6 +882,17 @@ def evaluate_linear_sum_assignment(gt_labels, pred_labels, outFn,
                 tp_skel_coverage = 0
             metrics.addMetric(tblname, "avg_tp_skel_coverage", tp_skel_coverage)
 
+        # visualize tp and errors
+        if visualize and tp > 0 and th == 0.5:
+            if visualize_type == "nuclei":
+                visualize_nuclei(gt_labels_rel, iouMat, gt_ind, pred_ind)
+            elif visualize_type == "neuron" and localization_criterion == "cldice":
+                visualize_neuron(
+                        gt_labels_rel, pred_labels_rel, gt_ind_ok, pred_ind_ok, 
+                        outFn, false_split_ind, fp_ind, fn_ind, fm_pred_ind, fm_gt_ind)
+            else:
+                raise NotImplementedError
+            
     avAP19 = np.mean(aps)
     avAP59 = np.mean(aps[4:])
     metrics.addMetric("confusion_matrix", "avAP", avAP59)
@@ -991,6 +989,222 @@ def get_centerline_overlap(skeletonize, compare, match):
     return match
 
 
+def visualize_nuclei(gt_labels_rel, iouMat, gt_ind, pred_ind):
+    vis_tp = np.zeros_like(gt_labels_rel, dtype=np.float32)
+    vis_fp = np.zeros_like(gt_labels_rel, dtype=np.float32)
+    vis_fn = np.zeros_like(gt_labels_rel, dtype=np.float32)
+    vis_tp_seg = np.zeros_like(gt_labels_rel, dtype=np.float32)
+    vis_tp_seg2 = np.zeros_like(gt_labels_rel, dtype=np.float32)
+    vis_fp_seg = np.zeros_like(gt_labels_rel, dtype=np.float32)
+    vis_fn_seg = np.zeros_like(gt_labels_rel, dtype=np.float32)
+    if len(gt_labels_rel.shape) == 3:
+        vis_fp_seg_bnd = np.zeros_like(gt_labels_rel, dtype=np.float32)
+        vis_fn_seg_bnd = np.zeros_like(gt_labels_rel, dtype=np.float32)
+
+    cntrs_gt = scipy.ndimage.measurements.center_of_mass(
+        gt_labels_rel > 0,
+        gt_labels_rel, sorted(list(np.unique(gt_labels_rel)))[1:])
+    cntrs_pred = scipy.ndimage.measurements.center_of_mass(
+        pred_labels_rel > 0,
+        pred_labels_rel, sorted(list(np.unique(pred_labels_rel)))[1:])
+    sz = 1
+    for gti, pi, in zip(gt_ind, pred_ind):
+        if iouMat[gti, pi] < th:
+            vis_fn_seg[gt_labels_rel == gti+1] = 1
+            if len(gt_labels_rel.shape) == 3:
+                set_boundary(gt_labels_rel, gti+1,
+                             vis_fn_seg_bnd)
+            vis_fp_seg[pred_labels_rel == pi+1] = 1
+            if len(gt_labels_rel.shape) == 3:
+                set_boundary(pred_labels_rel, pi+1,
+                             vis_fp_seg_bnd)
+            cntr = cntrs_gt[gti]
+            if len(gt_labels_rel.shape) == 3:
+                vis_fn[int(cntr[0]), int(cntr[1]), int(cntr[2])] = 1
+            else:
+                vis_fn[int(cntr[0]), int(cntr[1])] = 1
+            cntr = cntrs_pred[pi]
+            if len(gt_labels_rel.shape) == 3:
+                vis_fp[int(cntr[0]), int(cntr[1]), int(cntr[2])] = 1
+            else:
+                vis_fp[int(cntr[0]), int(cntr[1])] = 1
+        else:
+            vis_tp_seg[gt_labels_rel == gti+1] = 1
+            cntr = cntrs_gt[gti]
+            if len(gt_labels_rel.shape) == 3:
+                vis_tp[int(cntr[0]), int(cntr[1]), int(cntr[2])] = 1
+            else:
+                vis_tp[int(cntr[0]), int(cntr[1])] = 1
+            vis_tp_seg2[pred_labels_rel == pi+1] = 1
+    vis_tp = scipy.ndimage.gaussian_filter(vis_tp, sz, truncate=sz)
+    for gti in range(num_gt_labels):
+        if gti in gt_ind:
+            continue
+        vis_fn_seg[gt_labels_rel == gti+1] = 1
+        if len(gt_labels_rel.shape) == 3:
+            set_boundary(gt_labels_rel, gti+1,
+                         vis_fn_seg_bnd)
+        cntr = cntrs_gt[gti]
+        if len(gt_labels_rel.shape) == 3:
+            vis_fn[int(cntr[0]), int(cntr[1]), int(cntr[2])] = 1
+        else:
+            vis_fn[int(cntr[0]), int(cntr[1])] = 1
+    vis_fn = scipy.ndimage.gaussian_filter(vis_fn, sz, truncate=sz)
+    for pi in range(num_pred_labels):
+        if pi in pred_ind:
+            continue
+        vis_fp_seg[pred_labels_rel == pi+1] = 1
+        if len(gt_labels_rel.shape) == 3:
+            set_boundary(pred_labels_rel, pi+1,
+                         vis_fp_seg_bnd)
+        cntr = cntrs_pred[pi]
+        if len(gt_labels_rel.shape) == 3:
+            vis_fp[int(cntr[0]), int(cntr[1]), int(cntr[2])] = 1
+        else:
+            vis_fp[int(cntr[0]), int(cntr[1])] = 1
+    vis_fp = scipy.ndimage.gaussian_filter(vis_fp, sz, truncate=sz)
+    vis_tp = vis_tp/np.max(vis_tp)
+    vis_fp = vis_fp/np.max(vis_fp)
+    vis_fn = vis_fn/np.max(vis_fn)
+    with h5py.File(outFn + "_vis.hdf", 'w') as fi:
+        fi.create_dataset(
+            'volumes/vis_tp',
+            data=vis_tp,
+            compression='gzip')
+        fi.create_dataset(
+            'volumes/vis_fp',
+            data=vis_fp,
+            compression='gzip')
+        fi.create_dataset(
+            'volumes/vis_fn',
+            data=vis_fn,
+            compression='gzip')
+        fi.create_dataset(
+            'volumes/vis_tp_seg',
+            data=vis_tp_seg,
+            compression='gzip')
+        fi.create_dataset(
+            'volumes/vis_tp_seg2',
+            data=vis_tp_seg2,
+            compression='gzip')
+        fi.create_dataset(
+            'volumes/vis_fp_seg',
+            data=vis_fp_seg,
+            compression='gzip')
+        fi.create_dataset(
+            'volumes/vis_fn_seg',
+            data=vis_fn_seg,
+            compression='gzip')
+        if len(gt_labels_rel.shape) == 3:
+            fi.create_dataset(
+                'volumes/vis_fp_seg_bnd',
+                data=vis_fp_seg_bnd,
+                compression='gzip')
+            fi.create_dataset(
+                'volumes/vis_fn_seg_bnd',
+                data=vis_fn_seg_bnd,
+                compression='gzip')
+
+
+def visualize_neuron(gt_labels_rel, pred_labels_rel, gt_ind, pred_ind, outFn, 
+        false_split_ind, fp_ind, fn_ind, fm_pred_ind, fm_gt_ind):
+    if len(gt_labels_rel.shape) == 4:
+        gt = np.max(gt_labels_rel, axis=0)
+    else:
+        gt = gt_labels_rel
+    if len(pred_labels_rel.shape) == 4:
+        pred = np.max(pred_labels_rel, axis=0)
+    else:
+        pred = pred_labels_rel
+    
+    print(pred_ind, gt_ind)
+    num_gt = np.max(gt_labels_rel)
+    num_pred = np.max(pred_labels_rel)
+    gray_gt_cmap = (np.arange(num_gt + 1) / float(num_gt) * 255).astype(np.uint8)
+    gray_pred_cmap = (np.arange(num_pred + 1) / float(num_pred) * 255).astype(np.uint8)
+    dst = np.zeros_like(gt, dtype=np.uint8)
+    dst = np.stack([dst, dst, dst], axis=-1)
+
+    # visualize gt with same colormap
+    vis = np.zeros_like(dst)
+    for i in range(1, num_gt + 1):
+        vis[gt == i] = vis_cmap[(i-1) % len(vis_cmap)]
+    mip = np.max(vis, axis=0)
+    io.imsave(
+        outFn + '_gt.png',
+        mip.astype(np.uint8)
+    )
+    
+    # visualize tp, fp and false split with gt in gray
+    # tp green, fp blue, false split red
+    gt_gray = np.zeros_like(dst, dtype=np.uint8)
+    for i in range(1, num_gt + 1):
+        print(gray_gt_cmap[i])
+        gt_gray[gt == i] = [gray_gt_cmap[i],] * 3
+    vis = np.zeros_like(dst, dtype=np.uint8)
+    for i in pred_ind:
+        vis[pred == i] = [0, 255, 0]
+    for i in false_split_ind:
+        vis[pred == i] = [255, 0, 0]
+    for i in fp_ind:
+        vis[pred == i] = [0, 0, 255]
+
+    #with h5py.File(outFn + "_vis.hdf", 'w') as fi:
+    #    fi.create_dataset(
+    #        'volumes/vis_tp',
+    #        data=vis_tp,
+    #        compression='gzip')
+    mip = np.max(vis, axis=0)
+    gt_mip = np.max(gt_gray, axis=0)
+    mask = np.logical_not(np.any(mip > 0, axis=-1))
+    mip[mask] = gt_mip[mask]
+    io.imsave(
+        outFn + '_tp.png',
+        mip.astype(np.uint8)
+    )
+    
+    # visualize false negative in color, pred in grey
+    vis = np.zeros_like(dst, dtype=np.uint8)
+    for i in range(1, num_pred + 1):
+        vis[pred == i] = [gray_pred_cmap[i],] * 3
+    for i in fn_ind:
+        vis[gt == i] = vis_cmap[(i-1) % len(vis_cmap)]
+    mip = np.max(vis, axis=0)
+    io.imsave(
+        outFn + '_fn.png',
+        mip.astype(np.uint8)
+    )
+    
+    # show false merge errors
+    vis = np.zeros_like(dst)
+    print(fm_gt_ind, fm_pred_ind)
+    for i in fm_gt_ind:
+        print(i)
+        vis[np.max(gt_labels_rel == i, axis=0)] = vis_cmap[(i-1) % len(vis_cmap)]
+        print(np.sum(vis>0))
+    for i in fm_pred_ind:
+        print(i)
+        vis[pred == i] = [gray_pred_cmap[i],] * 3
+        print(np.sum(vis>0))
+
+    mip = np.max(vis, axis=0)
+    io.imsave(
+        outFn + '_false_merge.png',
+        mip.astype(np.uint8)
+    )
+
+    # overlay gt and pred
+    pred = ((pred_labels_rel > 0) * 255).astype(np.uint8)
+    gt = ((gt > 0) * 255).astype(np.uint8)
+    vis = np.stack([pred, gt, np.zeros_like(pred)], axis=-1).astype(np.uint8)
+    mip = np.max(vis, axis=0)
+    io.imsave(
+        outFn + '_overlayed.png',
+        mip.astype(np.uint8)
+    )
+    
+    
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument('--res_file', type=str,
@@ -1028,6 +1242,9 @@ if __name__ == "__main__":
                         action="store_true")
     parser.add_argument("--debug", help="",
                         action="store_true")
+    parser.add_argument('--visualize_type', type=str,
+                        help='which type of data should be visualized, e.g. nuclei, neurons.', 
+                        default="nuclei")
 
     logger.debug("arguments %s",tuple(sys.argv))
     args = parser.parse_args()
@@ -1038,4 +1255,5 @@ if __name__ == "__main__":
                   foreground_only=args.use_gt_fg,
                   background=args.background, res_key=args.res_key,
                   gt_key=args.gt_key, out_dir=args.out_dir, suffix=args.suffix,
-                  debug=args.debug, visualize=args.visualize)
+                  debug=args.debug, visualize=args.visualize, 
+                  visualize_type=args.visualize_type)
