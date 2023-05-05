@@ -602,6 +602,8 @@ def evaluate_file(res_file, gt_file, background=0,
     return metrics.metricsDict
 
 
+# todo: rename def, evaluate_volume( ?
+# todo: should pixelwise neuron evaluation also be possible? restructure code accordingly
 def evaluate_linear_sum_assignment(gt_labels, pred_labels, outFn,
                                    overlapping_inst=False, filterSz=None,
                                    visualize=False, localization_criterion="iou",
@@ -756,7 +758,10 @@ def evaluate_linear_sum_assignment(gt_labels, pred_labels, outFn,
         false_split_ind = []
         if num_matches > 0 and np.max(iouMat) > th:
             fscore_cnt = 0
+            # todo: use other like assignment_strategy = = [linear, greedy, overlap_gt_0_5]
             if greedy_by_score == False:
+                # assignment_strategy
+                # do optimal hungarian matching
                 costs = -(iouMat >= th).astype(float) - iouMat / (2*num_matches)
                 logger.info("start computing lin sum assign for th %s (%s)",
                             th, outFn)
@@ -772,6 +777,9 @@ def evaluate_linear_sum_assignment(gt_labels, pred_labels, outFn,
                         if fscore >= 0.8:
                             fscore_cnt += 1
             else:
+                # greedy matching by localization criterion
+                # this could be done before iterating through thresholds and then 
+                # only threshold
                 gt_ind, pred_ind = np.nonzero(iouMat > 0) # > th)
                 ious = iouMat[gt_ind, pred_ind]
                 # sort iou values in descending order
@@ -785,7 +793,7 @@ def evaluate_linear_sum_assignment(gt_labels, pred_labels, outFn,
                     if gt_idx not in gt_ind_ok and pred_idx not in pred_ind_ok and iou > th:
                         gt_ind_ok.append(gt_idx)
                         pred_ind_ok.append(pred_idx)
-                    # if gt labels is already assinged, count pred label as false split
+                    # if gt label is already assinged, count pred label as false split
                     elif gt_idx in gt_ind_ok and pred_idx not in pred_ind_ok \
                             and pred_idx not in false_split_ind:
                         false_split_ind.append(pred_idx)
@@ -809,6 +817,7 @@ def evaluate_linear_sum_assignment(gt_labels, pred_labels, outFn,
             fscore_cnt = 0
         
         metrics.addMetric(tblname, "Fscore_cnt", fscore_cnt)
+        # todo: take fp count from fp_ind excluding false splits as well
         fp = num_pred_labels - tp
         fn = num_gt_labels - tp
         metrics.addMetric(tblname, "AP_TP", tp)
@@ -834,6 +843,8 @@ def evaluate_linear_sum_assignment(gt_labels, pred_labels, outFn,
         #if kwargs.get("false_split_thresh") ?
         if localization_criterion == "cldice":
             if fp_ind is None:
+                # necessary if other than greedy matching
+                # move somewhere else?
                 pred_ind_all = np.arange(1, num_pred_labels + 1)
                 pred_ind_unassigned = pred_ind_all[np.isin(
                     pred_ind_all, pred_ind_ok, invert=True)]
@@ -848,6 +859,8 @@ def evaluate_linear_sum_assignment(gt_labels, pred_labels, outFn,
 
             # get false negative indices
             if fn_ind is None:
+                # necessary if other than greedy matching
+                # move somewhere else?
                 gt_ind_all = np.arange(1, num_gt_labels + 1)
                 gt_ind_unassigned = gt_ind_all[np.isin(gt_ind_all, gt_ind_ok, invert=True)]
                 fn_ind = gt_ind_unassigned
@@ -856,6 +869,7 @@ def evaluate_linear_sum_assignment(gt_labels, pred_labels, outFn,
             #gt_ind_all = np.arange(1, num_gt_labels + 1)
             #gt_ind_unassigned = gt_ind_all[np.isin(gt_ind_all, gt_ind_ok, invert=True)]
             #false_merge = np.sum(np.any(cl_recall[gt_ind_unassigned, 1:] > 0.1, axis=1))
+            # todo: define false merges with clDice in greedy matching?
             if gt_labels_rel.ndim == 4 and cl_recall_wo_overlap is not None:
                 fm = np.sum(cl_recall[1:, 1:] > th, axis=0)
             else:
@@ -989,6 +1003,7 @@ def get_centerline_overlap(skeletonize, compare, match):
     return match
 
 
+# todo: this is probably not working anymore, add parameters and test
 def visualize_nuclei(gt_labels_rel, iouMat, gt_ind, pred_ind):
     vis_tp = np.zeros_like(gt_labels_rel, dtype=np.float32)
     vis_fp = np.zeros_like(gt_labels_rel, dtype=np.float32)
@@ -1108,6 +1123,7 @@ def visualize_nuclei(gt_labels_rel, iouMat, gt_ind, pred_ind):
 
 def visualize_neuron(gt_labels_rel, pred_labels_rel, gt_ind, pred_ind, outFn, 
         false_split_ind, fp_ind, fn_ind, fm_pred_ind, fm_gt_ind):
+    # todo: find colormap
     if len(gt_labels_rel.shape) == 4:
         gt = np.max(gt_labels_rel, axis=0)
     else:
