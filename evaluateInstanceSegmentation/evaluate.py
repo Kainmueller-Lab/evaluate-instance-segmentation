@@ -15,6 +15,7 @@ import zarr
 from skimage.morphology import skeletonize, skeletonize_3d
 from skimage import io
 #from pylab import cm
+import pdb
 
 logger = logging.getLogger(__name__)
 
@@ -203,7 +204,8 @@ def evaluate_file(
         out_dir=None, suffix="",
         localization_criterion="iou", # "iou", "cldice"
         assignment_strategy="hungarian", # "hungarian", "greedy", "gt_0_5"
-        additional_metrics=None,
+        add_general_metrics=[],
+        add_multi_thresh_metrics=[],
         visualize=False,
         visualize_type="nuclei", # "nuclei" or "neuron"
         overlapping_inst=False,
@@ -241,6 +243,10 @@ def evaluate_file(
     
     # remove small components
     if remove_small_components is not None and remove_small_components > 0:
+        logger.info("call remove small components with filter size %i", 
+                remove_small_components)
+        logger.debug("prediction %s, shape %s", np.unique(pred_labels),
+                     pred_labels.shape)
         pred_labels = filter_components(pred_labels, remove_small_components)
         logger.debug("prediction %s, shape %s", np.unique(pred_labels),
                      pred_labels.shape)
@@ -257,13 +263,15 @@ def evaluate_file(
     # todo: define own function
     outFnBase = os.path.join(
         out_dir,
-        '' if remove_small_components is None else str(remove_small_components),
         os.path.splitext(os.path.basename(res_file))[0] +
-        res_key.replace("/","_") + suffix)
+        "_" + res_key.replace("/","_") + suffix)
     # add localization criterion
     outFnBase += "_" + localization_criterion
     # add assignment strategy
     outFnBase += "_" + assignment_strategy
+    # add remove small components
+    if remove_small_components is None and remove_small_components > 0:
+        outFnBase += "_rm" + str(remove_small_components)
     outFn = outFnBase
     os.makedirs(os.path.dirname(outFnBase), exist_ok=True)
 
@@ -298,7 +306,8 @@ def evaluate_file(
             assignment_strategy,
             evaluate_false_labels,
             unique_false_labels,
-            additional_metrics,
+            add_general_metrics,
+            add_multi_thresh_metrics,
             visualize,
             visualize_type,
             overlapping_inst,
@@ -326,6 +335,8 @@ def compute_localization_criterion(pred_labels_rel, gt_labels_rel,
     # intersection over union
     if localization_criterion == "iou":
         logger.debug("compute iou")
+        print(overlapping_inst, pred_labels_rel.shape, gt_labels_rel.shape)
+        # todo: implement iou for keep_gt_shape
         if overlapping_inst:
             pred_tile = [1, ] * pred_labels_rel.ndim
             pred_tile[0] = gt_labels_rel.shape[0]
@@ -377,6 +388,7 @@ def compute_localization_criterion(pred_labels_rel, gt_labels_rel,
     # centerline dice
     elif localization_criterion == "cldice":
         logger.debug("compute cldice")
+        # todo: transpose precMat
         precMat = get_centerline_overlap(
                 pred_labels_rel, gt_labels_rel,
                 np.transpose(precMat))
@@ -459,6 +471,8 @@ def assign_labels(iouMat, assignment_strategy, thresh, num_matches):
         gt_ind = gt_ind[sort]
         pred_ind = pred_ind[sort]
         ious = ious[sort]
+        gt_ind_ok = []
+        pred_ind_ok = []
         
         # assign greedy by iou score
         for gt_idx, pred_idx, iou in zip(gt_ind, pred_ind, ious):
@@ -467,20 +481,20 @@ def assign_labels(iouMat, assignment_strategy, thresh, num_matches):
                 gt_ind_ok.append(gt_idx)
                 pred_ind_ok.append(pred_idx)
             # if gt label is already assinged, count pred label as false split
-            elif gt_idx in gt_ind_ok and pred_idx not in pred_ind_ok \
-                    and pred_idx not in false_split_ind:
-                false_split_ind.append(pred_idx)
+            #elif gt_idx in gt_ind_ok and pred_idx not in pred_ind_ok \
+            #        and pred_idx not in false_split_ind:
+            #    false_split_ind.append(pred_idx)
         # get fn (unassigned gt_ind)
-        gt_ind_all = np.arange(1, num_gt_labels + 1)
-        fn_ind = gt_ind_all[np.isin(gt_ind_all, gt_ind_ok, invert=True)]
+        #gt_ind_all = np.arange(1, num_gt_labels + 1)
+        #fn_ind = gt_ind_all[np.isin(gt_ind_all, gt_ind_ok, invert=True)]
 
         # get fp (unassigned pred_ind)
-        pred_ind_all = np.arange(1, num_pred_labels + 1)
-        fp_ind = pred_ind_all[np.isin(pred_ind_all, 
-            np.concatenate([pred_ind_ok, false_split_ind]), invert=True)]
+        #pred_ind_all = np.arange(1, num_pred_labels + 1)
+        #fp_ind = pred_ind_all[np.isin(pred_ind_all, 
+        #    np.concatenate([pred_ind_ok, false_split_ind]), invert=True)]
 
-        print(pred_ind_ok, gt_ind_ok, fp_ind, fn_ind, false_split_ind)
         tp = len(pred_ind_ok)
+        print(tp, pred_ind_ok, gt_ind_ok)
     
     # todo: merge overlap_0_5 here
     #elif assignment_strategy == "overlap_0_5":
@@ -497,7 +511,7 @@ def assign_labels(iouMat, assignment_strategy, thresh, num_matches):
 
 
 def get_false_labels(tp_pred_ind, tp_gt_ind, num_pred_labels, num_gt_labels,
-        iou, precMat, recallMat, thresh, 
+        iouMat, precMat, recallMat, thresh, 
         overlapping_inst, unique_false_labels):
     
     # get false positive indices 
@@ -510,25 +524,31 @@ def get_false_labels(tp_pred_ind, tp_gt_ind, num_pred_labels, num_gt_labels,
     else:  
         # unassigned pred labels with maximal overlap for background
         fp_ind = pred_ind_unassigned[np.argmax(
-            precMat[pred_ind_unassigned], axis=1) == 0]
+            precMat[:, pred_ind_unassigned], axis=0) == 0]
+    logger.debug("false positive indices: %s", fp_ind)
 
     # get false split indices
     fs_ind = pred_ind_unassigned[
-            np.argmax(precMat[pred_ind_unassigned], axis=1) > 0]
+            np.argmax(precMat[:, pred_ind_unassigned], axis=0) > 0]
+    logger.debug("false split indices: %s", fs_ind)
 
     # get false negative indices
     gt_ind_all = np.arange(1, num_gt_labels + 1)
-    gt_ind_unassigned = gt_ind_all[np.isin(gt_ind_all, gt_ind_ok, invert=True)]
+    gt_ind_unassigned = gt_ind_all[np.isin(gt_ind_all, tp_gt_ind, invert=True)]
     fn_ind = gt_ind_unassigned
+    logger.debug("false negative indices: %s", fn_ind)
 
     # get false merger indices
     # check if pred label covers more than one gt label with clDice > thresh
-    iou_mask = iou[1:, 1:] > thresh
-    fm_pred_count = np.minimum(0, np.sum(iou_mask, axis=0) - 1)
+    iou_mask = iouMat[1:, 1:] > thresh
+    fm_pred_count = np.maximum(0, np.sum(iou_mask, axis=0) - 1)
     fm_count = np.sum(fm_pred_count)
     # we need fm_pred_ind and fm_gt_ind for visualization later on
-    fm_pred_ind = np.nonzero(fm_pred_count) + 1
-    fm_gt_ind = np.nonzero(iou_mask[:, fm_pred_ind])[0]
+    # correct indices to include background
+    fm_pred_ind = np.nonzero(fm_pred_count)[0] + 1
+    fm_gt_ind = np.nonzero(iou_mask[:, fm_pred_ind])[0] + 1
+    logger.debug("false merge indices (pred/gt/cnt): %s, %s, %i", 
+            fm_pred_ind, fm_gt_ind, fm_count)
     
     # check if merger also exists when ignoring overlapping regions
     if overlapping_inst:
@@ -543,7 +563,8 @@ def evaluate_volume(gt_labels, pred_labels, outFn,
         assignment_strategy="hungarian",
         evaluate_false_labels=False,
         unique_false_labels=False,
-        additional_metrics=None,
+        add_general_metrics=[],
+        add_multi_thresh_metrics=[],
         visualize=False,
         visualize_type="nuclei",
         overlapping_inst=False,  
@@ -573,15 +594,15 @@ def evaluate_volume(gt_labels, pred_labels, outFn,
     metrics.addMetric(tblNameGen, "Num Pred", num_pred_labels)
 
     # additional metrics: todo: where to put additional metrics? can we collect all together?
-    if more_general_metrics is not None:
-        if "gt_coverage" in additional_metrics:
+    if len(add_general_metrics) > 0:
+        if "avg_gt_skel_coverage" in add_general_metrics:
             # get gt coverage 
             # (, gt_skeleton_coverage in case of clDice as localization criterion)
             # todo: only take max gt label for each pred label to not count pred labels 
             # twice for overlapping gt instances
             # or after matching?
             #np.argmax(cl_prec[pred_ind_unassigned], axis=1)
-            gt_skel_coverage = np.sum(cl_recall[1:, 1:], axis=1)
+            gt_skel_coverage = np.sum(recallMat[1:, 1:], axis=1)
             gt_skel_coverage = np.mean(gt_skel_coverage)
             metrics.addMetric(tblNameGen, "avg_gt_skel_coverage", gt_skel_coverage)
     
@@ -598,8 +619,8 @@ def evaluate_volume(gt_labels, pred_labels, outFn,
         # assign prediction to ground truth labels
         if num_matches > 0 and np.max(iouMat) > th:
             tp, pred_ind, gt_ind = assign_labels(
-                    iouMat, assignment_strategy, thresh, num_matches, 
-                    overlapping_inst)
+                    iouMat, assignment_strategy, th, num_matches)
+            print(tp, pred_ind, gt_ind)
         else:
             tp = 0
             pred_ind = []
@@ -609,7 +630,7 @@ def evaluate_volume(gt_labels, pred_labels, outFn,
         if evaluate_false_labels == True or visualize == True:
             fp_ind, fn_ind, fs_ind, fm_pred_ind, fm_gt_ind, fm_count = get_false_labels(
                     pred_ind, gt_ind, num_pred_labels, num_gt_labels,
-                    iou, precMat, recallMat, th, 
+                    iouMat, precMat, recallMat, th, 
                     overlapping_inst, unique_false_labels
                     )
         
@@ -647,14 +668,14 @@ def evaluate_volume(gt_labels, pred_labels, outFn,
 
         # add additional multi-threshold metrics
         # todo: move to separate def
-        if len(add_multi_tresh_metrics) > 0:
-            if "tp_skel_coverage" in add_multi_thresh_metrics:
+        if len(add_multi_thresh_metrics) > 0:
+            if "avg_tp_skel_coverage" in add_multi_thresh_metrics:
                 # todo: add fix for overlapping inst
                 if tp > 0:
                     tp_skel_coverage = np.mean(np.sum(recallMat[gt_ind, 1:], axis=1))
                 else:
                     tp_skel_coverage = 0
-                metrics.addMetric(tblname, "tp_skel_coverage", tp_skel_coverage)
+                metrics.addMetric(tblname, "avg_tp_skel_coverage", tp_skel_coverage)
 
         # visualize tp and false labels
         if visualize and tp > 0 and th == 0.5:
@@ -713,7 +734,7 @@ def filter_components(volume, thresh):
     labels, counts = np.unique(volume, return_counts=True)
     small_labels = labels[counts <= thresh]
 
-    array = replace(
+    volume = replace(
         volume,
         np.array(small_labels),
         np.array([0] * len(small_labels))
@@ -734,6 +755,7 @@ def get_centerline_overlap(skeletonize, compare, match):
     )
     
     for label, label_count in zip(labels, labels_cnt):
+        logger.debug("compute centerline overlap for %i", label)
         if skeleton_one_inst_per_channel:
             #idx = np.unravel_index(np.argmax(mask), mask.shape)[0]
             mask = skeletonize[label - 1] #heads up: assuming increasing labels
@@ -983,6 +1005,7 @@ def visualize_neuron(gt_labels_rel, pred_labels_rel, gt_ind, pred_ind, outFn,
     
 
 if __name__ == "__main__":
+    # todo: update arguments
     parser = argparse.ArgumentParser()
     parser.add_argument('--res_file', type=str,
                         help='path to res_file', required=True)
