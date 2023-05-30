@@ -467,18 +467,14 @@ def assign_labels(iouMat, assignment_strategy, thresh, num_matches):
         gt_ind = gt_ind[sort]
         pred_ind = pred_ind[sort]
         ious = ious[sort]
-        gt_ind_ok = []
-        pred_ind_ok = []
         
         # assign greedy by iou score
         for gt_idx, pred_idx, iou in zip(gt_ind, pred_ind, ious):
             print(gt_idx, pred_idx, iou)
-            if gt_idx not in gt_ind_ok and pred_idx not in pred_ind_ok:
-                gt_ind_ok.append(gt_idx)
-                pred_ind_ok.append(pred_idx)
-
-        tp = len(pred_ind_ok)
-        print(tp, pred_ind_ok, gt_ind_ok)
+            if gt_idx not in tp_gt_ind and pred_idx not in tp_pred_ind:
+                tp_gt_ind.append(gt_idx)
+                tp_pred_ind.append(pred_idx)
+        tp = len(tp_pred_ind)
     
     # todo: merge overlap_0_5 here
     #elif assignment_strategy == "overlap_0_5":
@@ -488,10 +484,10 @@ def assign_labels(iouMat, assignment_strategy, thresh, num_matches):
                 assignment_strategy)
     
     # correct indices to include background
-    pred_ind_ok = np.array(pred_ind_ok) + 1
-    gt_ind_ok = np.array(gt_ind_ok) + 1    
+    tp_pred_ind = np.array(tp_pred_ind) + 1
+    tp_gt_ind = np.array(tp_gt_ind) + 1
     
-    return tp, pred_ind_ok, gt_ind_ok
+    return tp, tp_pred_ind, tp_gt_ind
 
 
 def get_false_labels(tp_pred_ind, tp_gt_ind, num_pred_labels, num_gt_labels,
@@ -659,7 +655,7 @@ def evaluate_volume(gt_labels, pred_labels, outFn,
                 visualize_nuclei(gt_labels_rel, iouMat, gt_ind, pred_ind)
             elif visualize_type == "neuron" and localization_criterion == "cldice":
                 visualize_neuron(
-                        gt_labels_rel, pred_labels_rel, gt_ind_ok, pred_ind_ok, 
+                        gt_labels_rel, pred_labels_rel, gt_ind, pred_ind,
                         outFn, false_split_ind, fp_ind, fn_ind, fm_pred_ind, fm_gt_ind)
             else:
                 raise NotImplementedError
