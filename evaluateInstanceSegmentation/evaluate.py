@@ -331,6 +331,7 @@ def compute_localization_criterion(pred_labels_rel, gt_labels_rel,
     fscoreMat = np.zeros((num_gt_labels+1, num_pred_labels+1),
                          dtype=np.float32)
     iouMat_wo_overlap = None
+    recallMat_wo_overlap = None
 
     # intersection over union
     if localization_criterion == "iou":
@@ -409,22 +410,22 @@ def compute_localization_criterion(pred_labels_rel, gt_labels_rel,
             else:
                 pred_wo_overlap[mask] = 0
             
-            precMat_wo_overlap = get_centerline_overlap(
-                    pred_wo_overlap, gt_wo_overlap,
-                    np.transpose(np.zeros_like(precMat)))
-            precMat_wo_overlap = np.transpose(precMat_wo_overlap)
+            #precMat_wo_overlap = get_centerline_overlap(
+            #        pred_wo_overlap, gt_wo_overlap,
+            #        np.transpose(np.zeros_like(precMat)))
+            #precMat_wo_overlap = np.transpose(precMat_wo_overlap)
             recallMat_wo_overlap = get_centerline_overlap(
                     gt_wo_overlap, pred_wo_overlap,
                     np.zeros_like(recallMat))
-            iouMat_wo_overlap = np.nan_to_num(
-                    2 * precMat_wo_overlap * recallMat_wo_overlap / (
-                        precMat_wo_overlap + recallMat_wo_overlap)
-                    ) 
+            #iouMat_wo_overlap = np.nan_to_num(
+            #        2 * precMat_wo_overlap * recallMat_wo_overlap / (
+            #            precMat_wo_overlap + recallMat_wo_overlap)
+            #        ) 
         iouMat = np.nan_to_num(2 * precMat * recallMat / (precMat + recallMat))
     else:
         raise NotImplementedError
     print(iouMat.shape, recallMat.shape, precMat.shape, fscoreMat.shape)
-    return iouMat, recallMat, precMat, fscoreMat, iouMat_wo_overlap
+    return iouMat, recallMat, precMat, fscoreMat, recallMat_wo_overlap
 
 
 def assign_labels(iouMat, assignment_strategy, thresh, num_matches):
@@ -492,7 +493,7 @@ def assign_labels(iouMat, assignment_strategy, thresh, num_matches):
 
 def get_false_labels(tp_pred_ind, tp_gt_ind, num_pred_labels, num_gt_labels,
         iouMat, precMat, recallMat, thresh, 
-        overlapping_inst, unique_false_labels, iouMat_wo_overlap):
+        overlapping_inst, unique_false_labels, recallMat_wo_overlap):
     
     # get false positive indices 
     pred_ind_all = np.arange(1, num_pred_labels + 1)
@@ -523,7 +524,7 @@ def get_false_labels(tp_pred_ind, tp_gt_ind, num_pred_labels, num_gt_labels,
     # check if merger also exists when ignoring gt overlapping regions
     if overlapping_inst:
         iou_mask = np.logical_and(
-                iouMat[1:, 1:] > thresh, iouMat_wo_overlap[1:, 1:] > thresh)
+                recallMat[1:, 1:] > thresh, recallMat_wo_overlap[1:, 1:] > thresh)
     else:
         iou_mask = iouMat[1:, 1:] > thresh
     fm_pred_count = np.maximum(0, np.sum(iou_mask, axis=0) - 1)
@@ -565,7 +566,7 @@ def evaluate_volume(gt_labels, pred_labels, outFn,
     num_matches = min(num_gt_labels, num_pred_labels)
     
     # get localization criterion
-    iouMat, recallMat, precMat, fscoreMat, iouMat_wo_overlap = \
+    iouMat, recallMat, precMat, fscoreMat, recallMat_wo_overlap = \
             compute_localization_criterion(
                     pred_labels_rel, gt_labels_rel,
                     num_pred_labels, num_gt_labels,
@@ -602,7 +603,7 @@ def evaluate_volume(gt_labels, pred_labels, outFn,
             fp_ind, fn_ind, fs_ind, fm_pred_ind, fm_gt_ind, fm_count = get_false_labels(
                     pred_ind, gt_ind, num_pred_labels, num_gt_labels,
                     iouMat, precMat, recallMat, th, 
-                    check_wo_overlap, unique_false_labels, iouMat_wo_overlap
+                    check_wo_overlap, unique_false_labels, recallMat_wo_overlap
                     )
         
         # get false positive and false negative counters
