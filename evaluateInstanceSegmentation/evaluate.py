@@ -14,6 +14,7 @@ import toml
 import zarr
 from skimage.morphology import skeletonize, skeletonize_3d
 from skimage import io
+from matplotlib.colors import to_rgb
 #from pylab import cm
 
 logger = logging.getLogger(__name__)
@@ -40,6 +41,19 @@ vis_cmap = [
         [199, 233, 192],
         [218, 218, 235],
         #[217, 217, 217]
+        ]
+
+gt_cmap = [
+        "#34568B", "#A3B18A", "#FF6F61",  "#6B5B95", 
+        "#E9FF70", "#88B04B", "#E47A2E", "#F7CAC9", "#9C9A40", "#92A8D1", 
+        "#EDD59E", "#E8A798", "#9C4722", "#6B5876", "#CE3175",
+        "#6F9FD8", "#DBB1CD", "#00A591", "#BC70A4", "#BFD641"
+        ]
+pred_cmap = [
+        "#FDAC53", "#9BB7D4", "#B55A30", "#F5DF4D", "#0072B5", 
+        "#A0DAA9", "#E9897E", "#00A170", "#926AA6", "#EFE1CE", 
+        "#9A8B4F", "#FFA500", "#56C6A9", "#4B5335", "#798EA4", 
+        "#E0B589", "#00758F", "#FA7A35", "#578CA9", "#95DEE3" 
         ]
 class Metrics:
     def __init__(self, fn):
@@ -165,6 +179,7 @@ def read_file(infn, key):
          infn.endswith(".TIF") or infn.endswith(".TIFF"):
         volume = tifffile.imread(infn)
     elif infn.endswith(".zarr"):
+        print(infn)
         f = zarr.open(infn, 'r')
         volume = np.array(f[key])
     else:
@@ -222,7 +237,7 @@ def evaluate_file(
         assignment_strategy = "hungarian"
     filterSz = kwargs.get("filterSz", None)
     if filterSz is not None and filterSz > 0:
-        remove_small_components=filterSz
+        remove_small_components = filterSz
     
     # put together output filename with suffix
     # todo: define own function
@@ -235,7 +250,7 @@ def evaluate_file(
     # add assignment strategy
     outFnBase += "_" + assignment_strategy
     # add remove small components
-    if remove_small_components is None and remove_small_components > 0:
+    if remove_small_components is not None and remove_small_components > 0:
         outFnBase += "_rm" + str(remove_small_components)
     outFn = outFnBase
     os.makedirs(os.path.dirname(outFnBase), exist_ok=True)
@@ -499,13 +514,16 @@ def get_false_labels(tp_pred_ind, tp_gt_ind, num_pred_labels, num_gt_labels,
     pred_ind_all = np.arange(1, num_pred_labels + 1)
     pred_ind_unassigned = pred_ind_all[np.isin(
         pred_ind_all, tp_pred_ind, invert=True)]
+    fp_ind_only_bg = pred_ind_unassigned[np.argmax(
+        precMat[:, pred_ind_unassigned], axis=0) == 0]
     if unique_false_labels == False:
         # all unassigned pred labels
         fp_ind = pred_ind_unassigned
     else:  
         # unassigned pred labels with maximal overlap for background
-        fp_ind = pred_ind_unassigned[np.argmax(
-            precMat[:, pred_ind_unassigned], axis=0) == 0]
+        fp_ind = fp_ind_only_bg
+        #fp_ind = pred_ind_unassigned[np.argmax(
+        #    precMat[:, pred_ind_unassigned], axis=0) == 0]
     logger.debug("false positive indices: %s", fp_ind)
 
     # get false split indices
@@ -531,12 +549,15 @@ def get_false_labels(tp_pred_ind, tp_gt_ind, num_pred_labels, num_gt_labels,
     fm_count = np.sum(fm_pred_count)
     # we need fm_pred_ind and fm_gt_ind for visualization later on
     # correct indices to include background
-    fm_pred_ind = np.nonzero(fm_pred_count)[0] + 1
-    fm_gt_ind = np.nonzero(iou_mask[:, fm_pred_ind])[0] + 1
+    fm_pred_ind = np.nonzero(fm_pred_count)[0]
+    fm_gt_ind = []
+    for i in fm_pred_ind:
+        fm_gt_ind.append(np.nonzero(iou_mask[:, i])[0] + 1)
+    fm_pred_ind = np.array(fm_pred_ind) + 1
     logger.debug("false merge indices (pred/gt/cnt): %s, %s, %i", 
             fm_pred_ind, fm_gt_ind, fm_count)
 
-    return fp_ind, fn_ind, fs_ind, fm_pred_ind, fm_gt_ind, fm_count
+    return fp_ind, fn_ind, fs_ind, fm_pred_ind, fm_gt_ind, fm_count, fp_ind_only_bg
 
 
 # todo: should pixelwise neuron evaluation also be possible?
@@ -553,6 +574,10 @@ def evaluate_volume(gt_labels, pred_labels, outFn,
         overlapping_inst=False,  
         partly=False
         ):
+    
+    # if partly is set, then also set evaluate_false_labels to get false splits
+    if partly:
+        evaluate_false_labels = True
     
     # relabel labels sequentially
     pred_labels_rel, _, _ = relabel_sequential(pred_labels.astype(np.int))
@@ -600,16 +625,21 @@ def evaluate_volume(gt_labels, pred_labels, outFn,
         if evaluate_false_labels == True or visualize == True:
             check_wo_overlap = overlapping_inst or \
                     len(gt_labels_rel.shape) > len(pred_labels_rel.shape)
-            fp_ind, fn_ind, fs_ind, fm_pred_ind, fm_gt_ind, fm_count = get_false_labels(
-                    pred_ind, gt_ind, num_pred_labels, num_gt_labels,
-                    iouMat, precMat, recallMat, th, 
-                    check_wo_overlap, unique_false_labels, recallMat_wo_overlap
-                    )
+            fp_ind, fn_ind, fs_ind, fm_pred_ind, fm_gt_ind, \
+                    fm_count, fp_ind_only_bg = get_false_labels(
+                            pred_ind, gt_ind, num_pred_labels, num_gt_labels,
+                            iouMat, precMat, recallMat, th, 
+                            check_wo_overlap, unique_false_labels, 
+                            recallMat_wo_overlap
+                            )
         
         # get false positive and false negative counters
-        if unique_false_labels == True:
+        if unique_false_labels:
             fp = len(fp_ind)
             fn = len(fn_ind)
+        elif partly:
+            fp = len(fs_ind)
+            fn = num_gt_labels - tp
         else:
             fp = num_pred_labels - tp
             fn = num_gt_labels - tp
@@ -643,12 +673,19 @@ def evaluate_volume(gt_labels, pred_labels, outFn,
         # todo: move to separate def
         if len(add_multi_thresh_metrics) > 0:
             if "avg_tp_skel_coverage" in add_multi_thresh_metrics:
-                # todo: add fix for overlapping inst
-                if tp > 0:
-                    tp_skel_coverage = np.mean(np.sum(recallMat[gt_ind, 1:], axis=1))
-                else:
-                    tp_skel_coverage = 0
-                metrics.addMetric(tblname, "avg_tp_skel_coverage", tp_skel_coverage)
+                tp_cov = []
+                if th == 0.5:
+                    if tp > 0:
+                        max_gt_ind = np.argmax(precMat, axis=0)
+                        tp_cov = []
+                        for i in gt_ind:
+                            tp_cov.append(np.sum(recallMat[i, max_gt_ind==i]))
+                        tp_skel_coverage = np.mean(tp_cov)
+                        #tp_skel_coverage = np.mean(np.sum(recallMat[gt_ind, 1:], axis=1))
+                    else:
+                        tp_skel_coverage = 0
+                    metrics.addMetric(tblname, "tp_skel_coverage", tp_cov)
+                    metrics.addMetric(tblname, "avg_tp_skel_coverage", tp_skel_coverage)
 
         # visualize tp and false labels
         if visualize and tp > 0 and th == 0.5:
@@ -657,7 +694,7 @@ def evaluate_volume(gt_labels, pred_labels, outFn,
             elif visualize_type == "neuron" and localization_criterion == "cldice":
                 visualize_neuron(
                         gt_labels_rel, pred_labels_rel, gt_ind, pred_ind,
-                        outFn, false_split_ind, fp_ind, fn_ind, fm_pred_ind, fm_gt_ind)
+                        outFn, fs_ind, fp_ind, fn_ind, fm_pred_ind, fm_gt_ind, fp_ind_only_bg)
             else:
                 raise NotImplementedError
     
@@ -681,9 +718,11 @@ def evaluate_volume(gt_labels, pred_labels, outFn,
             # todo: recalculate clRecall for each gt and union of assigned predictions, 
             # because predictions could potentially overlap (not in our predictions so far)
             max_gt_ind = np.argmax(precMat, axis=0)
+            print("max_gt_ind: ", max_gt_ind)
             gt_cov = []
             for i in range(1, recallMat.shape[0]):
                 gt_cov.append(np.sum(recallMat[i, max_gt_ind==i]))
+            print("gt cov: ", gt_cov)
             #gt_skel_coverage = np.sum(recallMat[1:, 1:], axis=1)
             gt_skel_coverage = np.mean(gt_cov)
             metrics.addMetric(tblNameGen, "gt_skel_coverage", gt_cov)
@@ -901,9 +940,12 @@ def visualize_nuclei(gt_labels_rel, iouMat, gt_ind, pred_ind):
                 compression='gzip')
 
 
+def rgb(idx, cmap):
+    return (np.array(to_rgb(cmap[idx % len(cmap)])) * 255).astype(np.uint8)
+
+
 def visualize_neuron(gt_labels_rel, pred_labels_rel, gt_ind, pred_ind, outFn, 
-        false_split_ind, fp_ind, fn_ind, fm_pred_ind, fm_gt_ind):
-    # todo: find colormap
+        fs_ind, fp_ind, fn_ind, fm_pred_ind, fm_gt_ind, fp_ind_only_bg):
     if len(gt_labels_rel.shape) == 4:
         gt = np.max(gt_labels_rel, axis=0)
     else:
@@ -912,92 +954,147 @@ def visualize_neuron(gt_labels_rel, pred_labels_rel, gt_ind, pred_ind, outFn,
         pred = np.max(pred_labels_rel, axis=0)
     else:
         pred = pred_labels_rel
-    
     print(pred_ind, gt_ind)
     num_gt = np.max(gt_labels_rel)
     num_pred = np.max(pred_labels_rel)
-    gray_gt_cmap = (np.arange(num_gt + 1) / float(num_gt) * 255).astype(np.uint8)
-    gray_pred_cmap = (np.arange(num_pred + 1) / float(num_pred) * 255).astype(np.uint8)
+    #gray_gt_cmap = (np.arange(num_gt + 1) / float(num_gt) * 255).astype(np.uint8)
+    #gray_pred_cmap = (np.arange(num_pred + 1) / float(num_pred) * 255).astype(np.uint8)
     dst = np.zeros_like(gt, dtype=np.uint8)
     dst = np.stack([dst, dst, dst], axis=-1)
 
-    # visualize gt with same colormap
+    # visualize gt
     vis = np.zeros_like(dst)
     for i in range(1, num_gt + 1):
-        vis[gt == i] = vis_cmap[(i-1) % len(vis_cmap)]
+        vis[gt == i] = rgb(i-1, gt_cmap) 
     mip = np.max(vis, axis=0)
+    mip_gt_mask = np.max(mip>0, axis=-1)
     io.imsave(
         outFn + '_gt.png',
         mip.astype(np.uint8)
     )
     
+    # visualize pred
+    vis = np.zeros_like(dst)
+    for i in range(1, num_pred + 1):
+        vis[pred == i] = rgb(i-1, pred_cmap)
+    mip = np.max(vis, axis=0)
+    mip_pred_mask = np.max(mip>0, axis=-1)
+    io.imsave(
+        outFn + '_pred.png',
+        mip.astype(np.uint8)
+    )
+    
+    # visualize tp pred + fp + fs
+    vis = np.zeros_like(dst)
+    for i in pred_ind:
+        vis[pred == i] = rgb(i-1, pred_cmap)
+    for i in fp_ind:
+        vis[pred == i] = [255, 0, 0]
+    mip = np.max(vis, axis=0)
+    mask = np.logical_and(mip_gt_mask, np.logical_not(np.max(mip > 0, axis=-1)))
+    mip[mask] = [200, 200, 200]
+    io.imsave(
+        outFn + '_tp_pred_fp_fs.png',
+        mip.astype(np.uint8)
+    )
+
+    # visualize tp pred + fs
+    #vis = np.zeros_like(dst)
+    #for i in pred_ind:
+    #    vis[pred == i] = rgb(i-1, pred_cmap)
+    #for i in fs_ind:
+    #    vis[pred == i] = [255, 0, 0]
+    #mip = np.max(vis, axis=0)
+    #mask = np.logical_and(mip_gt_mask, np.logical_not(np.max(mip > 0, axis=-1)))
+    #mip[mask] = [200, 200, 200]
+    #io.imsave(
+    #    outFn + '_tp_pred_fs.png',
+    #    mip.astype(np.uint8)
+    #)
+
     # visualize tp, fp and false split with gt in gray
     # tp green, fp blue, false split red
-    gt_gray = np.zeros_like(dst, dtype=np.uint8)
-    for i in range(1, num_gt + 1):
-        print(gray_gt_cmap[i])
-        gt_gray[gt == i] = [gray_gt_cmap[i],] * 3
-    vis = np.zeros_like(dst, dtype=np.uint8)
-    for i in pred_ind:
-        vis[pred == i] = [0, 255, 0]
-    for i in false_split_ind:
-        vis[pred == i] = [255, 0, 0]
-    for i in fp_ind:
-        vis[pred == i] = [0, 0, 255]
+    #gt_gray = np.zeros_like(dst, dtype=np.uint8)
+    #for i in range(1, num_gt + 1):
+    #    print(gray_gt_cmap[i])
+    #    gt_gray[gt == i] = [gray_gt_cmap[i],] * 3
+    #vis = np.zeros_like(dst, dtype=np.uint8)
+    #for i in pred_ind:
+    #    vis[pred == i] = [0, 255, 0]
+    #for i in false_split_ind:
+    #    vis[pred == i] = [255, 0, 0]
+    #for i in fp_ind:
+    #    vis[pred == i] = [0, 0, 255]
 
     #with h5py.File(outFn + "_vis.hdf", 'w') as fi:
     #    fi.create_dataset(
     #        'volumes/vis_tp',
     #        data=vis_tp,
     #        compression='gzip')
-    mip = np.max(vis, axis=0)
-    gt_mip = np.max(gt_gray, axis=0)
-    mask = np.logical_not(np.any(mip > 0, axis=-1))
-    mip[mask] = gt_mip[mask]
-    io.imsave(
-        outFn + '_tp.png',
-        mip.astype(np.uint8)
-    )
+    #mip = np.max(vis, axis=0)
+    #gt_mip = np.max(gt_gray, axis=0)
+    #mask = np.logical_not(np.any(mip > 0, axis=-1))
+    #mip[mask] = gt_mip[mask]
+    #io.imsave(
+    #    outFn + '_tp.png',
+    #    mip.astype(np.uint8)
+    #)
     
-    # visualize false negative in color, pred in grey
+    # visualize false negative in color, false merger in red
     vis = np.zeros_like(dst, dtype=np.uint8)
-    for i in range(1, num_pred + 1):
-        vis[pred == i] = [gray_pred_cmap[i],] * 3
+    fm_merged = np.unique(np.array(fm_gt_ind).flatten())
+    #for i in range(1, num_pred + 1):
+    #    vis[pred == i] = [gray_pred_cmap[i],] * 3
     for i in fn_ind:
-        vis[gt == i] = vis_cmap[(i-1) % len(vis_cmap)]
+        if i not in fm_merged:
+            vis[gt == i] = rgb(i-1, gt_cmap)
+    for i in fm_merged:
+        if i not in gt_ind:
+            vis[gt == i] = [255, 0, 0]
     mip = np.max(vis, axis=0)
+    mask = np.logical_and(mip_pred_mask, np.logical_not(np.max(mip > 0, axis=-1)))
+    mip[mask] = [200, 200, 200]
     io.imsave(
-        outFn + '_fn.png',
+        outFn + '_fn_fm.png',
         mip.astype(np.uint8)
     )
     
-    # show false merge errors
-    vis = np.zeros_like(dst)
-    print(fm_gt_ind, fm_pred_ind)
-    for i in fm_gt_ind:
-        print(i)
-        vis[np.max(gt_labels_rel == i, axis=0)] = vis_cmap[(i-1) % len(vis_cmap)]
-        print(np.sum(vis>0))
-    for i in fm_pred_ind:
-        print(i)
-        vis[pred == i] = [gray_pred_cmap[i],] * 3
-        print(np.sum(vis>0))
+    # show false merge errors: one image per merge
+    """
+    for i, fm_pred_idx in enumerate(fm_pred_ind):
+        #vis = np.zeros_like(dst)
+        #vis[pred == fm_pred_idx] = [200, 200, 200]
+        #mip = np.max(vis, axis=0)
+        visgt = np.zeros_like(dst)
+        for fm_gt_idx in fm_gt_ind[i]:
+            visgt[np.max(gt_labels_rel == fm_gt_idx, axis=0)] = rgb(
+                    fm_gt_idx-1, gt_cmap)
+        mipgt = np.max(visgt, axis=0)
+        #mask = np.logical_and(np.max(mipgt > 0, axis=-1), 
+        #        np.max(mip > 0, axis=-1))
+        #mip[mask] = 0.5 * mip[mask] + 0.5 * mipgt[mask]
+        #mask = np.logical_and(np.logical_not(mask), np.max(mipgt > 0, axis=-1))
+        #mip[mask] = mipgt[mask]
 
-    mip = np.max(vis, axis=0)
-    io.imsave(
-        outFn + '_false_merge.png',
-        mip.astype(np.uint8)
-    )
+        #overlap = np.logical_and(np.max(vis > 0, axis=-1), np.max(visgt > 0, axis=-1))
+        #vis[overlap] = 0.5 * vis[overlap] + 0.5 * visgt[overlap]
+        #only_gt = np.logical_and(np.max(visgt > 0, axis=-1), np.logical_not(overlap))
+        #vis[only_gt] = visgt[only_gt]
+        io.imsave(
+            outFn + '_fm_%i.png' % i,
+            mipgt.astype(np.uint8)
+        )
+    """
 
     # overlay gt and pred
-    pred = ((pred_labels_rel > 0) * 255).astype(np.uint8)
-    gt = ((gt > 0) * 255).astype(np.uint8)
-    vis = np.stack([pred, gt, np.zeros_like(pred)], axis=-1).astype(np.uint8)
-    mip = np.max(vis, axis=0)
-    io.imsave(
-        outFn + '_overlayed.png',
-        mip.astype(np.uint8)
-    )
+    #pred = ((pred_labels_rel > 0) * 255).astype(np.uint8)
+    #gt = ((gt > 0) * 255).astype(np.uint8)
+    #vis = np.stack([pred, gt, np.zeros_like(pred)], axis=-1).astype(np.uint8)
+    #mip = np.max(vis, axis=0)
+    #io.imsave(
+    #    outFn + '_overlayed.png',
+    #    mip.astype(np.uint8)
+    #)
     
     
 

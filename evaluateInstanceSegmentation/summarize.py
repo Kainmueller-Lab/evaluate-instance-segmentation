@@ -8,11 +8,12 @@ def deep_get(dictionary, keys, default=None):
         default, keys.split("."), dictionary
     )
 
-def summarize_metric_dict(metric_dicts, names, metrics, output_name):
+def summarize_metric_dict(metric_dicts, names, metrics, output_name, agg_inst_dict=None):
 
     csvf = open(output_name, 'w', newline='')
     writer = csv.writer(csvf, delimiter=';',
                         quotechar='|', quoting=csv.QUOTE_MINIMAL)
+    print(metrics)
     header = ['sample'] + [m.split('.')[-2] + ' ' + m.split('.')[-1] for m in
                       metrics]
     writer.writerow(header)
@@ -27,8 +28,18 @@ def summarize_metric_dict(metric_dicts, names, metrics, output_name):
                 summary[i, k] = 0.0
 
         writer.writerow([name] + list(summary[i]))
-
     writer.writerow(['mean'] + list(np.mean(summary, axis=0)))
     writer.writerow(['sum'] + list(np.sum(summary, axis=0)))
+    
+    # write average over instances
+    if agg_inst_dict is not None:
+        avg_inst = []
+        for m in metrics:
+            v = deep_get(agg_inst_dict, m)
+            if v is not None:
+                avg_inst.append(v)
+            else:
+                avg_inst.append(0.0)
+        writer.writerow(['avg_inst'] + avg_inst)
 
     csvf.close()
