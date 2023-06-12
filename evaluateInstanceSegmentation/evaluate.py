@@ -44,16 +44,16 @@ vis_cmap = [
         ]
 
 gt_cmap = [
-        "#34568B", "#A3B18A", "#FF6F61",  "#6B5B95", 
-        "#E9FF70", "#88B04B", "#E47A2E", "#F7CAC9", "#9C9A40", "#92A8D1", 
-        "#EDD59E", "#E8A798", "#9C4722", "#6B5876", "#CE3175",
-        "#6F9FD8", "#DBB1CD", "#00A591", "#BC70A4", "#BFD641"
+        "#88B04B", "#9F00A7", "#EFC050", "#34568B", "#E47A2E", "#BC70A4",
+        "#92A8D1", "#A3B18A", "#45B8AC", "#6B5B95",
+        "#F7CAC9", "#E8A798", "#9C9A40", "#9C4722", "#6B5876",
+        "#CE3175", "#00A591", "#EDD59E", "#1E7145", "#E9FF70",
         ]
 pred_cmap = [
-        "#FDAC53", "#9BB7D4", "#B55A30", "#F5DF4D", "#0072B5", 
-        "#A0DAA9", "#E9897E", "#00A170", "#926AA6", "#EFE1CE", 
-        "#9A8B4F", "#FFA500", "#56C6A9", "#4B5335", "#798EA4", 
-        "#E0B589", "#00758F", "#FA7A35", "#578CA9", "#95DEE3" 
+        "#FDAC53", "#9BB7D4", "#B55A30", "#F5DF4D", "#0072B5",
+        "#A0DAA9", "#E9897E", "#00A170", "#926AA6", "#EFE1CE",
+        "#9A8B4F", "#FFA500", "#56C6A9", "#4B5335", "#798EA4",
+        "#E0B589", "#00758F", "#FA7A35", "#578CA9", "#95DEE3"
         ]
 class Metrics:
     def __init__(self, fn):
@@ -258,7 +258,7 @@ def evaluate_file(
     # if from_scratch is set, overwrite existing evaluation files
     # otherwise try to load precomputed metric
     if not kwargs.get("from_scratch") and \
-       len(glob.glob(outFnBase + "*.toml")) > 0:
+            len(glob.glob(outFn + ".toml")) > 0: # heads up: changed here from outFnBase *.toml
         with open(outFn+".toml", 'r') as tomlFl:
             metrics = toml.load(tomlFl)
         if kwargs.get('metric', None) is None:
@@ -1056,6 +1056,28 @@ def visualize_neuron(gt_labels_rel, pred_labels_rel, gt_ind, pred_ind, outFn,
     mip[mask] = [200, 200, 200]
     io.imsave(
         outFn + '_fn_fm.png',
+        mip.astype(np.uint8)
+    )
+
+    # version 2 of gt errors
+    # visualize false negative in color, false merger in red
+    vis = np.zeros_like(dst, dtype=np.uint8)
+    #fm_merged = np.unique(np.array(fm_gt_ind).flatten())
+    #for i in range(1, num_pred + 1):
+    #    vis[pred == i] = [gray_pred_cmap[i],] * 3
+    for i in gt_ind:
+        vis[gt == i] = rgb(i-1, gt_cmap)
+    for i in fn_ind:
+        #if i not in fm_merged:
+        vis[gt == i] = [255, 0, 0]
+    #for i in fm_merged:
+    #    if i not in gt_ind:
+    #        vis[gt == i] = [255, 0, 0]
+    mip = np.max(vis, axis=0)
+    mask = np.logical_and(mip_pred_mask, np.logical_not(np.max(mip > 0, axis=-1)))
+    mip[mask] = [200, 200, 200]
+    io.imsave(
+        outFn + '_fn_fm_v2.png',
         mip.astype(np.uint8)
     )
     
