@@ -180,7 +180,11 @@ def read_file(infn, key):
         volume = tifffile.imread(infn)
     elif infn.endswith(".zarr"):
         print(infn)
-        f = zarr.open(infn, 'r')
+        try:
+            f = zarr.open(infn, 'r')
+        except zarr.errors.PathNotFoundError as e:
+            logger.info("File %s not found!", infn)
+            raise e
         volume = np.array(f[key])
     else:
         raise NotImplementedError("invalid file format %s", infn)
@@ -639,6 +643,7 @@ def evaluate_volume(gt_labels, pred_labels, outFn,
             fn = len(fn_ind)
         elif partly:
             fp = len(fs_ind)
+            fp_ind = fs_ind
             fn = num_gt_labels - tp
         else:
             fp = num_pred_labels - tp
@@ -688,8 +693,8 @@ def evaluate_volume(gt_labels, pred_labels, outFn,
                     metrics.addMetric(tblname, "avg_tp_skel_coverage", tp_skel_coverage)
 
         # visualize tp and false labels
-        if visualize and tp > 0 and th == 0.5:
-            if visualize_type == "nuclei":
+        if visualize and th == 0.5:
+            if visualize_type == "nuclei" and tp > 0:
                 visualize_nuclei(gt_labels_rel, iouMat, gt_ind, pred_ind)
             elif visualize_type == "neuron" and localization_criterion == "cldice":
                 visualize_neuron(
@@ -944,6 +949,13 @@ def rgb(idx, cmap):
     return (np.array(to_rgb(cmap[idx % len(cmap)])) * 255).astype(np.uint8)
 
 
+def proj_label(lbl):
+    dst = np.zeros(lbl.shape[1:], dtype=np.uint8)
+    for i in range(lbl.shape[0]-1, -1, -1):
+        dst[np.max(dst, axis=-1)==0,:] = lbl[i][np.max(dst, axis=-1)==0,:]
+
+    return dst
+
 def visualize_neuron(gt_labels_rel, pred_labels_rel, gt_ind, pred_ind, outFn, 
         fs_ind, fp_ind, fn_ind, fm_pred_ind, fm_gt_ind, fp_ind_only_bg):
     if len(gt_labels_rel.shape) == 4:
@@ -966,7 +978,7 @@ def visualize_neuron(gt_labels_rel, pred_labels_rel, gt_ind, pred_ind, outFn,
     vis = np.zeros_like(dst)
     for i in range(1, num_gt + 1):
         vis[gt == i] = rgb(i-1, gt_cmap) 
-    mip = np.max(vis, axis=0)
+    mip = proj_label(vis)
     mip_gt_mask = np.max(mip>0, axis=-1)
     io.imsave(
         outFn + '_gt.png',
@@ -977,7 +989,7 @@ def visualize_neuron(gt_labels_rel, pred_labels_rel, gt_ind, pred_ind, outFn,
     vis = np.zeros_like(dst)
     for i in range(1, num_pred + 1):
         vis[pred == i] = rgb(i-1, pred_cmap)
-    mip = np.max(vis, axis=0)
+    mip = proj_label(vis)
     mip_pred_mask = np.max(mip>0, axis=-1)
     io.imsave(
         outFn + '_pred.png',
@@ -990,7 +1002,7 @@ def visualize_neuron(gt_labels_rel, pred_labels_rel, gt_ind, pred_ind, outFn,
         vis[pred == i] = rgb(i-1, pred_cmap)
     for i in fp_ind:
         vis[pred == i] = [255, 0, 0]
-    mip = np.max(vis, axis=0)
+    mip = proj_label(vis)
     mask = np.logical_and(mip_gt_mask, np.logical_not(np.max(mip > 0, axis=-1)))
     mip[mask] = [200, 200, 200]
     io.imsave(
@@ -1042,7 +1054,8 @@ def visualize_neuron(gt_labels_rel, pred_labels_rel, gt_ind, pred_ind, outFn,
     
     # visualize false negative in color, false merger in red
     vis = np.zeros_like(dst, dtype=np.uint8)
-    fm_merged = np.unique(np.array(fm_gt_ind).flatten())
+    fm_merged = np.unique(np.array(
+        [ind for inds in fm_gt_ind for ind in inds]).flatten())
     #for i in range(1, num_pred + 1):
     #    vis[pred == i] = [gray_pred_cmap[i],] * 3
     for i in fn_ind:
@@ -1051,7 +1064,7 @@ def visualize_neuron(gt_labels_rel, pred_labels_rel, gt_ind, pred_ind, outFn,
     for i in fm_merged:
         if i not in gt_ind:
             vis[gt == i] = [255, 0, 0]
-    mip = np.max(vis, axis=0)
+    mip = proj_label(vis)
     mask = np.logical_and(mip_pred_mask, np.logical_not(np.max(mip > 0, axis=-1)))
     mip[mask] = [200, 200, 200]
     io.imsave(
@@ -1068,12 +1081,12 @@ def visualize_neuron(gt_labels_rel, pred_labels_rel, gt_ind, pred_ind, outFn,
     for i in gt_ind:
         vis[gt == i] = rgb(i-1, gt_cmap)
     for i in fn_ind:
-        #if i not in fm_merged:
-        vis[gt == i] = [255, 0, 0]
-    #for i in fm_merged:
-    #    if i not in gt_ind:
-    #        vis[gt == i] = [255, 0, 0]
-    mip = np.max(vis, axis=0)
+        if i not in fm_merged:
+            vis[gt == i] = [255, 64, 64]
+    for i in fm_merged:
+       if i not in gt_ind:
+           vis[gt == i] = [192, 0, 0]
+    mip = proj_label(vis)
     mask = np.logical_and(mip_pred_mask, np.logical_not(np.max(mip > 0, axis=-1)))
     mip[mask] = [200, 200, 200]
     io.imsave(
