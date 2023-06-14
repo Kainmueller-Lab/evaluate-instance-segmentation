@@ -1,8 +1,11 @@
 Evaluation scripts for instance segmentation
 =======================================================
 
-Developed for nuclei instances segmentation in 2d and 3d.
-Computes average precision (AP = TP/(TP+FP+FN))
+*currently under construction*
+
+Developed for instances segmentation in 2d and 3d.
+Computes a number of evaluation metrics (e.g., AP, F1, coverage, precision, recall).
+Provides visualization of the errors.
 
 installation:
 -------------
@@ -17,14 +20,8 @@ pip install -e .
 
 usage:
 -------
-
-``` shell
-    python evaluate.py --res_file <pred-file> --res_key <hdf-key> --gt_file <gt-file> --gt_key <hdf-key> --out_dir output --background 0
-```
-(`--res_key` and `--gt_key` only required for hdf or zarr input)
-
-By default hungarian matching is used to compute the matches of prediction and ground truth (can be disabled with `--no_use_linear_sum_assignment`.<br>
-AP is computed for multiple thresholds.
+It is currently use by importing the module and calling the `evaluate_file` function.
+It will be updated to be callable from the command line.
 
 output:
 --------
