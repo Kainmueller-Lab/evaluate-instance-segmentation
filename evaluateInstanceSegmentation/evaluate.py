@@ -15,46 +15,24 @@ import zarr
 from skimage.morphology import skeletonize, skeletonize_3d
 from skimage import io
 from matplotlib.colors import to_rgb
-#from pylab import cm
 
 logger = logging.getLogger(__name__)
 
 
-vis_cmap = [
-        [ 49, 130, 189],
-        [230,  85,  13],
-        [ 49, 163,  84],
-        [117, 107, 177],
-        #[99, 99, 99],
-        [107, 174, 214],
-        [253, 141,  60],
-        [116, 196, 118],
-        [158, 154, 200],
-        #[150, 150, 150],
-        [158, 202, 225],
-        [253, 174, 107],
-        [161, 217, 155],
-        [188, 189, 220],
-        #[189, 189, 189],
-        [198, 219, 239],
-        [253, 208, 162],
-        [199, 233, 192],
-        [218, 218, 235],
-        #[217, 217, 217]
-        ]
-
 gt_cmap = [
-        "#88B04B", "#9F00A7", "#EFC050", "#34568B", "#E47A2E", "#BC70A4",
-        "#92A8D1", "#A3B18A", "#45B8AC", "#6B5B95",
+        "#88B04B", "#9F00A7", "#EFC050", "#34568B", "#E47A2E",
+        "#BC70A4", "#92A8D1", "#A3B18A", "#45B8AC", "#6B5B95",
         "#F7CAC9", "#E8A798", "#9C9A40", "#9C4722", "#6B5876",
         "#CE3175", "#00A591", "#EDD59E", "#1E7145", "#E9FF70",
         ]
+
 pred_cmap = [
         "#FDAC53", "#9BB7D4", "#B55A30", "#F5DF4D", "#0072B5",
         "#A0DAA9", "#E9897E", "#00A170", "#926AA6", "#EFE1CE",
         "#9A8B4F", "#FFA500", "#56C6A9", "#4B5335", "#798EA4",
         "#E0B589", "#00758F", "#FA7A35", "#578CA9", "#95DEE3"
         ]
+
 class Metrics:
     def __init__(self, fn):
         self.metricsDict = {}
@@ -217,18 +195,36 @@ def check_sizes(gt_labels, pred_labels, overlapping_inst, **kwargs):
     return gt_labels, pred_labels
 
 
+def get_output_name(out_dir, res_file, res_key, suffix,
+        localization_criterion, assignment_strategy,
+        remove_small_components):
+    outFnBase = os.path.join(
+        out_dir,
+        os.path.splitext(os.path.basename(res_file))[0] +
+        "_" + res_key.replace("/","_") + suffix)
+    # add localization criterion
+    outFnBase += "_" + localization_criterion
+    # add assignment strategy
+    outFnBase += "_" + assignment_strategy
+    # add remove small components
+    if remove_small_components is not None and remove_small_components > 0:
+        outFnBase += "_rm" + str(remove_small_components)
+    outFn = outFnBase
+    os.makedirs(os.path.dirname(outFnBase), exist_ok=True)
+
+    return outFn
+
+
 def evaluate_file(
         res_file, gt_file, res_key=None, gt_key=None,
         out_dir=None, suffix="",
         localization_criterion="iou", # "iou", "cldice"
         assignment_strategy="hungarian", # "hungarian", "greedy", "gt_0_5"
         add_general_metrics=[],
-        add_multi_thresh_metrics=[],
         visualize=False,
         visualize_type="nuclei", # "nuclei" or "neuron"
         overlapping_inst=False,
         partly=False,
-        background=0, 
         foreground_only=False, 
         remove_small_components=None,
         evaluate_false_labels=False,
@@ -244,20 +240,9 @@ def evaluate_file(
         remove_small_components = filterSz
     
     # put together output filename with suffix
-    # todo: define own function
-    outFnBase = os.path.join(
-        out_dir,
-        os.path.splitext(os.path.basename(res_file))[0] +
-        "_" + res_key.replace("/","_") + suffix)
-    # add localization criterion
-    outFnBase += "_" + localization_criterion
-    # add assignment strategy
-    outFnBase += "_" + assignment_strategy
-    # add remove small components
-    if remove_small_components is not None and remove_small_components > 0:
-        outFnBase += "_rm" + str(remove_small_components)
-    outFn = outFnBase
-    os.makedirs(os.path.dirname(outFnBase), exist_ok=True)
+    outFn = get_output_name(out_dir, res_file, res_key, suffix,
+            localization_criterion, assignment_strategy,
+            remove_small_components)
 
     # if from_scratch is set, overwrite existing evaluation files
     # otherwise try to load precomputed metric
@@ -310,7 +295,7 @@ def evaluate_file(
         try:
             pred_labels[gt_labels==0] = 0
         except IndexError:
-            pred_labels[:, np.any(gt_labels, axis=0).astype(np.int)==0] = 0
+            pred_labels[:, np.any(gt_labels, axis=0).astype(int)==0] = 0
     logger.info("processing %s %s", res_file, gt_file)
 
     # relabel gt labels in case of binary mask per channel
@@ -325,7 +310,6 @@ def evaluate_file(
             evaluate_false_labels,
             unique_false_labels,
             add_general_metrics,
-            add_multi_thresh_metrics,
             visualize,
             visualize_type,
             overlapping_inst,
@@ -572,7 +556,6 @@ def evaluate_volume(gt_labels, pred_labels, outFn,
         evaluate_false_labels=False,
         unique_false_labels=False,
         add_general_metrics=[],
-        add_multi_thresh_metrics=[],
         visualize=False,
         visualize_type="nuclei",
         overlapping_inst=False,  
@@ -584,7 +567,7 @@ def evaluate_volume(gt_labels, pred_labels, outFn,
         evaluate_false_labels = True
     
     # relabel labels sequentially
-    pred_labels_rel, _, _ = relabel_sequential(pred_labels.astype(np.int))
+    pred_labels_rel, _, _ = relabel_sequential(pred_labels.astype(int))
     gt_labels_rel, _, _ = relabel_sequential(gt_labels)
 
     print("check for overlap: ", np.sum(np.sum(gt_labels_rel > 0, axis=0) > 1))
@@ -674,24 +657,6 @@ def evaluate_volume(gt_labels, pred_labels, outFn,
             metrics.addMetric(tblname, "false_split", len(fs_ind))
             metrics.addMetric(tblname, "false_merge", int(fm_count))
 
-        # add additional multi-threshold metrics
-        # todo: move to separate def
-        if len(add_multi_thresh_metrics) > 0:
-            if "avg_tp_skel_coverage" in add_multi_thresh_metrics:
-                tp_cov = []
-                if th == 0.5:
-                    if tp > 0:
-                        max_gt_ind = np.argmax(precMat, axis=0)
-                        tp_cov = []
-                        for i in gt_ind:
-                            tp_cov.append(np.sum(recallMat[i, max_gt_ind==i]))
-                        tp_skel_coverage = np.mean(tp_cov)
-                        #tp_skel_coverage = np.mean(np.sum(recallMat[gt_ind, 1:], axis=1))
-                    else:
-                        tp_skel_coverage = 0
-                    metrics.addMetric(tblname, "tp_skel_coverage", tp_cov)
-                    metrics.addMetric(tblname, "avg_tp_skel_coverage", tp_skel_coverage)
-
         # visualize tp and false labels
         if visualize and th == 0.5:
             if visualize_type == "nuclei" and tp > 0:
@@ -704,7 +669,7 @@ def evaluate_volume(gt_labels, pred_labels, outFn,
                 raise NotImplementedError
     
     # save multi-threshold metrics to dict
-    avAP19 = np.mean(aps)   # todo: check with Peter, should also include 0.05s?
+    avAP19 = np.mean(aps[:-5])
     avAP59 = np.mean(aps[4:])
     metrics.addMetric("confusion_matrix", "avAP", avAP59)
     metrics.addMetric("confusion_matrix", "avAP59", avAP59)
@@ -713,25 +678,58 @@ def evaluate_volume(gt_labels, pred_labels, outFn,
     avFscore59 = np.mean(fscores[4:])
     metrics.addMetric("confusion_matrix", "avFscore", avFscore19)
     metrics.addMetric("confusion_matrix", "avFscore59", avFscore59)
+    metrics.addMetric("confusion_matrix", "avFscore19", avFscore19)
 
     # additional metrics
     if len(add_general_metrics) > 0:
+        # get coverage for ground truth instances
         if "avg_gt_skel_coverage" in add_general_metrics:
-            # get gt coverage 
-            # only take max gt label for each pred label to not count pred labels 
-            # twice for overlapping gt instances
-            # todo: recalculate clRecall for each gt and union of assigned predictions, 
-            # because predictions could potentially overlap (not in our predictions so far)
+            # only take max gt label for each pred label to not count
+            # pred labels twice for overlapping gt instances
             max_gt_ind = np.argmax(precMat, axis=0)
-            print("max_gt_ind: ", max_gt_ind)
             gt_cov = []
-            for i in range(1, recallMat.shape[0]):
-                gt_cov.append(np.sum(recallMat[i, max_gt_ind==i]))
+            # if gt and pred have overlapping instances
+            if overlapping_inst:
+                # recalculate clRecall for each gt and union of assigned
+                # predictions, as predicted instances can potentially overlap
+                max_gt_ind_unique = np.unique(max_gt_ind[max_gt_ind > 0])
+                for gt_i in np.arange(1, num_gt_labels + 1):
+                    if gt_i in max_gt_ind_unique:
+                        pred_union = np.zeros(
+                                pred_labels_rel.shape[1:], 
+                                dtype=pred_labels_rel.dtype)
+                        for pred_i in np.arange(num_pred_labels + 1)[max_gt_ind == gt_i]:
+                            mask = pred_labels_rel[pred_i - 1] > 0
+                            pred_union[mask] = 1
+                        gt_cov.append(get_centerline_overlap_single(gt_labels_rel, 
+                                pred_union, gt_i, 1))
+                    else:
+                        gt_cov.append(0.0)
+            else:
+                # if gt has overlapping instances, but not prediction
+                if len(gt_labels_rel.shape) > len(pred_labels_rel.shape):
+                    print("gt cov for overlapping gt, but not pred")
+                    for i in range(1, recallMat.shape[0]):
+                        gt_cov.append(np.sum(recallMat[i, max_gt_ind==i]))
+                # if none has overlapping instances
+                else:
+                    gt_cov = np.sum(recallMat[1:, 1:], axis=1)
             print("gt cov: ", gt_cov)
-            #gt_skel_coverage = np.sum(recallMat[1:, 1:], axis=1)
             gt_skel_coverage = np.mean(gt_cov)
             metrics.addMetric(tblNameGen, "gt_skel_coverage", gt_cov)
             metrics.addMetric(tblNameGen, "avg_gt_skel_coverage", gt_skel_coverage)
+
+            # get coverage for true positive ground truth instances (> 0.5)
+            if "avg_tp_skel_coverage" in add_general_metrics:
+                gt_cov = np.array(gt_cov)
+                tp_cov = gt_cov[gt_cov > 0.5]
+                if len(tp_cov) > 0:
+                    tp_skel_coverage = np.mean(tp_cov)
+                else:
+                    tp_skel_coverage = 0
+                metrics.addMetric(tblNameGen, "tp_skel_coverage", tp_cov)
+                metrics.addMetric(tblNameGen, "avg_tp_skel_coverage", tp_skel_coverage)
+
         if "avg_f1_cov_score" in add_general_metrics:
             avg_f1_cov_score = 0.5 * avFscore19 + 0.5 * gt_skel_coverage
             metrics.addMetric(tblNameGen, "avg_f1_cov_score", avg_f1_cov_score)
@@ -783,19 +781,31 @@ def filter_components(volume, thresh):
     return volume
 
 
+def get_centerline_overlap_single(skeletonize, compare,
+        skeletonize_label, compare_label):
+    mask = skeletonize == skeletonize_label
+    if mask.ndim == 4:
+        mask = np.max(mask, axis=0)
+    skeleton = skeletonize_3d(mask) > 0
+    skeleton_size = np.sum(skeleton)
+    mask = compare == compare_label
+    if mask.ndim == 4:
+        mask == np.max(mask, axis=0)
+
+    return np.sum(mask[skeleton]) / float(skeleton_size)
+
+
 def get_centerline_overlap(skeletonize, compare, match):
+    # heads up: only implemented for 3d data
     skeleton_one_inst_per_channel = True if skeletonize.ndim == 4 else False
     compare_one_inst_per_channel = True if compare.ndim == 4 else False
     
     if compare_one_inst_per_channel:
         fg = np.max(compare > 0, axis=0).astype(np.uint8)
-
-    labels, labels_cnt = np.unique(
-        skeletonize[skeletonize > 0],
-        return_counts=True
-    )
     
-    for label, label_count in zip(labels, labels_cnt):
+    labels = np.unique(skeletonize[skeletonize > 0])
+
+    for label in labels:
         logger.debug("compute centerline overlap for %i", label)
         if skeleton_one_inst_per_channel:
             #idx = np.unravel_index(np.argmax(mask), mask.shape)[0]
@@ -1051,3 +1061,97 @@ def visualize_neuron(gt_labels_rel, pred_labels_rel, gt_ind, pred_ind, outFn,
         outFn + '_fn_fm_v2.png',
         mip.astype(np.uint8)
     )
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser()
+    # input output
+    parser.add_argument('--res_file', type=str,
+            help='path to result file', required=True)
+    parser.add_argument('--gt_file', type=str,
+            help='path to ground truth file', required=True)
+    parser.add_argument('--res_key', type=str,
+            help='name result hdf/zarr key')
+    parser.add_argument('--gt_key', type=str,
+            help='name ground truth hdf/zarr key')
+    parser.add_argument('--out_dir', type=str,
+            help='output directory', required=True)
+    parser.add_argument('--suffix', type=str,
+            help='suffix (deprecated)', default='')
+    # metrics definitions
+    parser.add_argument('--localization_criterion', type=str,
+            help='localization_criterion', default='iou',
+            choices=['iou', 'cldice'])
+    parser.add_argument('--assignment_strategy', type=str,
+            help='assignment strategy', default='hungarian',
+            choices=['hungarian', 'greedy'])
+    parser.add_argument('--add_general_metrics', type=str,
+            nargs='+', help='add general metrics', default=[])
+    parser.add_argument('--metric', type=str,
+            default='confusion_matrix.th_0_5.AP',
+            help='check if this metric already has been computed in '\
+                    'possibly existing result files')
+    # visualize
+    parser.add_argument('--visualize', help='visualize segmentation errors',
+            action='store_true', default=False)
+    parser.add_argument('--visualize_type', type=str,
+            default='nuclei',
+            help='which type of data should be visualized, '\
+                    'e.g. nuclei, neurons.',)
+    # other
+    parser.add_argument('--overlapping_inst', action='store_true',
+            default=False,
+            help='if there can be multiple instances per pixel '\
+                    'in ground truth and prediction')
+    parser.add_argument('--keep_gt_shape', action='store_true',
+            default=False,
+            help='if there can be multiple instances per pixel '\
+                    'in ground truth but not prediction')
+    parser.add_argument('--partly', action='store_true',
+            default=False,
+            help='if ground truth is only labeled partly')
+    parser.add_argument('--foreground_only', action='store_true',
+            default=False,
+            help='if background should be excluded')
+    parser.add_argument('--remove_small_components', type=int,
+            default=None,
+            help='remove instances with less pixel than this threshold')
+    parser.add_argument('--evaluate_false_labels', action='store_true',
+            default=False,
+            help='if false split and false merge should be computed '\
+                    'besides false positives and false negatives')
+    parser.add_argument('--unique_false_labels', action='store_true',
+            default=False,
+            help='if false positives should not include false splits '\
+                    'and false negatives not false merges') # take out?
+    parser.add_argument('--from_scratch', action='store_true',
+            default=False,
+            help='recompute everything (instead of checking '\
+                    'if results are already there)')
+    parser.add_argument("--debug", help="",
+                        action="store_true")
+
+    logger.debug("arguments %s",tuple(sys.argv))
+    args = parser.parse_args()
+
+    evaluate_file(args.res_file, args.gt_file,
+            res_key=args.res_key,
+            gt_key=args.gt_key,
+            out_dir=args.out_dir,
+            suffix=args.suffix,
+            localization_criterion=args.localization_criterion,
+            assignment_strategy=args.assignment_strategy,
+            add_general_metrics=args.add_general_metrics,
+            visualize=args.visualize,
+            visualize_type=args.visualize_type,
+            overlapping_inst=args.overlapping_inst,
+            keep_gt_shape=args.keep_gt_shape,
+            partly=args.partly,
+            foreground_only=args.foreground_only,
+            remove_small_components=args.remove_small_components,
+            evaluate_false_labels=args.evaluate_false_labels,
+            unique_false_labels=args.unique_false_labels,
+            from_scratch=args.from_scratch,
+            debug=args.debug
+            )
+
