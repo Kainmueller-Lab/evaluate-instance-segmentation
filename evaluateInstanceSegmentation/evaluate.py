@@ -37,14 +37,19 @@ class Metrics:
     def __init__(self, fn):
         self.metricsDict = {}
         self.metricsArray = []
-        self.fn = fn
-        self.outFl = open(self.fn+".txt", 'w')
+        if fn is not None:
+            self.fn = fn
+            self.outFl = open(self.fn + '.txt', 'w')
+        else:
+            self.fn = None
+            self.outFl = None
 
     def save(self):
-        self.outFl.close()
-        logger.info("saving %s", self.fn)
-        tomlFl = open(self.fn+".toml", 'w')
-        toml.dump(self.metricsDict, tomlFl)
+        if self.outFl is not None:
+            self.outFl.close()
+            logger.info("saving %s", self.fn)
+            tomlFl = open(self.fn+".toml", 'w')
+            toml.dump(self.metricsDict, tomlFl)
 
     def addTable(self, name, dct=None):
         levels = name.split(".")
@@ -67,8 +72,9 @@ class Metrics:
             return self.getTable(name, dct=dct[levels[0]])
 
     def addMetric(self, table, name, value):
-        as_str = "{}: {}".format(name, value)
-        self.outFl.write(as_str+"\n")
+        if self.outFl is not None:
+            as_str = "{}: {}".format(name, value)
+            self.outFl.write(as_str+"\n")
         self.metricsArray.append(value)
         tbl = self.getTable(table)
         tbl[name] = value
@@ -642,7 +648,7 @@ def evaluate_volume(gt_labels, pred_labels, outFn,
         ap = precision * recall
         aps.append(ap)
         if (precision + recall) > 0:
-            fscore = (2. * precision * recall) / max(1, precision + recall)
+            fscore = (2. * precision * recall) / (precision + recall)
         else:
             fscore = 0.0
         fscores.append(fscore)
@@ -696,7 +702,7 @@ def evaluate_volume(gt_labels, pred_labels, outFn,
                 for gt_i in np.arange(1, num_gt_labels + 1):
                     if gt_i in max_gt_ind_unique:
                         pred_union = np.zeros(
-                                pred_labels_rel.shape[1:], 
+                                pred_labels_rel.shape[1:],
                                 dtype=pred_labels_rel.dtype)
                         for pred_i in np.arange(num_pred_labels + 1)[max_gt_ind == gt_i]:
                             mask = pred_labels_rel[pred_i - 1] > 0
@@ -708,13 +714,11 @@ def evaluate_volume(gt_labels, pred_labels, outFn,
             else:
                 # if gt has overlapping instances, but not prediction
                 if len(gt_labels_rel.shape) > len(pred_labels_rel.shape):
-                    print("gt cov for overlapping gt, but not pred")
                     for i in range(1, recallMat.shape[0]):
                         gt_cov.append(np.sum(recallMat[i, max_gt_ind==i]))
                 # if none has overlapping instances
                 else:
                     gt_cov = np.sum(recallMat[1:, 1:], axis=1)
-            print("gt cov: ", gt_cov)
             gt_skel_coverage = np.mean(gt_cov)
             metrics.addMetric(tblNameGen, "gt_skel_coverage", gt_cov)
             metrics.addMetric(tblNameGen, "avg_gt_skel_coverage", gt_skel_coverage)
