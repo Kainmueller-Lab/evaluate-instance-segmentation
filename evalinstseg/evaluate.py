@@ -1067,7 +1067,7 @@ def visualize_neuron(gt_labels_rel, pred_labels_rel, gt_ind, pred_ind, outFn,
     )
 
 
-if __name__ == "__main__":
+def main():
     parser = argparse.ArgumentParser()
     # input output
     parser.add_argument('--res_file', type=str,
@@ -1159,3 +1159,6 @@ if __name__ == "__main__":
             debug=args.debug
             )
 
+
+if __name__ == "__main__":
+    main()
