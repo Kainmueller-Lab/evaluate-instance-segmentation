@@ -1,6 +1,8 @@
-import numpy as np
 import csv
 from functools import reduce
+
+import numpy as np
+
 
 def deep_get(dictionary, keys, default=None):
     return reduce(
@@ -30,7 +32,7 @@ def summarize_metric_dict(metric_dicts, names, metrics, output_name, agg_inst_di
         writer.writerow([name] + list(summary[i]))
     writer.writerow(['mean'] + list(np.mean(summary, axis=0)))
     writer.writerow(['sum'] + list(np.sum(summary, axis=0)))
-    
+
     # write average over instances
     if agg_inst_dict is not None:
         avg_inst = []
