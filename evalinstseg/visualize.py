@@ -81,7 +81,7 @@ def paint_boundary(labels_rel, label, target):
 
 
 def visualize_nuclei(
-        gt_labels_rel, pred_labels_rel, iouMat, gt_ind, pred_ind, th, outFn):
+        gt_labels_rel, pred_labels_rel, locMat, gt_ind, pred_ind, th, outFn):
     """visualize nuclei (blob-like) segmentation results"""
     vis_tp = np.zeros_like(gt_labels_rel, dtype=np.float32)
     vis_fp = np.zeros_like(gt_labels_rel, dtype=np.float32)
@@ -104,7 +104,7 @@ def visualize_nuclei(
 
     sz = 1
     for gti, pi, in zip(gt_ind, pred_ind):
-        if iouMat[gti, pi] < th:
+        if locMat[gti, pi] < th:
             vis_fn_seg[gt_labels_rel == gti+1] = 1
             paint_boundary(gt_labels_rel, gti+1, vis_fn_seg_bnd)
             vis_fp_seg[pred_labels_rel == pi+1] = 1

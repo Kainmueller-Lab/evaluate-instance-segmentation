@@ -244,7 +244,7 @@ def get_centerline_overlap(to_skeletonize, compare_with, match):
 
 
 # todo: define own functions per localization criterion
-# todo: rename iouMat, not use num_*_labels as parameters here?
+# todo: not use num_*_labels as parameters here?
 def compute_localization_criterion(pred_labels_rel, gt_labels_rel,
         num_pred_labels, num_gt_labels,
         localization_criterion, overlapping_inst):
@@ -255,13 +255,13 @@ def compute_localization_criterion(pred_labels_rel, gt_labels_rel,
     logger.debug("evaluate localization criterion for all gt and pred label pairs")
 
     # create matrices for pixelwise overlap measures
-    iouMat = np.zeros((num_gt_labels+1, num_pred_labels+1),
+    locMat = np.zeros((num_gt_labels+1, num_pred_labels+1),
                       dtype=np.float32)
     recallMat = np.zeros((num_gt_labels+1, num_pred_labels+1),
                          dtype=np.float32)
     precMat = np.zeros((num_gt_labels+1, num_pred_labels+1),
                        dtype=np.float32)
-    iouMat_wo_overlap = None
+    locMat_wo_overlap = None
     recallMat_wo_overlap = None
 
     # intersection over union
@@ -311,7 +311,7 @@ def compute_localization_criterion(pred_labels_rel, gt_labels_rel,
         for (u,v), c in zip(overlay_labels, overlay_labels_counts):
             iou = c / (gt_labels_count_dict[v] + pred_labels_count_dict[u] - c)
 
-            iouMat[v, u] = iou
+            locMat[v, u] = iou
             recallMat[v, u] = c / gt_labels_count_dict[v]
             precMat[v, u] = c / pred_labels_count_dict[u]
 
@@ -346,18 +346,18 @@ def compute_localization_criterion(pred_labels_rel, gt_labels_rel,
             recallMat_wo_overlap = get_centerline_overlap(
                     gt_wo_overlap, pred_wo_overlap,
                     np.zeros_like(recallMat))
-            #iouMat_wo_overlap = np.nan_to_num(
+            #locMat_wo_overlap = np.nan_to_num(
             #        2 * precMat_wo_overlap * recallMat_wo_overlap / (
             #            precMat_wo_overlap + recallMat_wo_overlap)
             #        )
-        iouMat = np.nan_to_num(2 * precMat * recallMat / (precMat + recallMat))
+        locMat = np.nan_to_num(2 * precMat * recallMat / (precMat + recallMat))
     else:
         raise NotImplementedError
-    print(iouMat.shape, recallMat.shape, precMat.shape)
-    return iouMat, recallMat, precMat, recallMat_wo_overlap
+    print(locMat.shape, recallMat.shape, precMat.shape)
+    return locMat, recallMat, precMat, recallMat_wo_overlap
 
 
-def assign_labels(iouMat, assignment_strategy, thresh, num_matches):
+def assign_labels(locMat, assignment_strategy, thresh, num_matches):
     """match (assign) prediction and gt labels
 
     Returns
@@ -373,16 +373,16 @@ def assign_labels(iouMat, assignment_strategy, thresh, num_matches):
     """
     tp_pred_ind = []
     tp_gt_ind = []
-    iouFgMat = iouMat[1:, 1:]
+    locFgMat = locMat[1:, 1:]
 
     # optimal hungarian matching
     if assignment_strategy == "hungarian":
-        costs = -(iouFgMat >= thresh).astype(float) - iouFgMat / (2 * num_matches)
+        costs = -(locFgMat >= thresh).astype(float) - locFgMat / (2 * num_matches)
         logger.info("start computing lin sum assign for thresh %s",
                     thresh)
         gt_ind, pred_ind = linear_sum_assignment(costs)
         assert num_matches == len(gt_ind) == len(pred_ind)
-        match_ok = iouFgMat[gt_ind, pred_ind] >= thresh
+        match_ok = locFgMat[gt_ind, pred_ind] >= thresh
         tp = np.count_nonzero(match_ok)
 
         # get true positive indices
@@ -394,18 +394,18 @@ def assign_labels(iouMat, assignment_strategy, thresh, num_matches):
     # greedy matching by localization criterion
     elif assignment_strategy == "greedy":
         logger.info("start computing greedy assignment for thresh %s, thresh")
-        gt_ind, pred_ind = np.nonzero(iouFgMat > thresh) # > 0) if it should be
+        gt_ind, pred_ind = np.nonzero(locFgMat > thresh) # > 0) if it should be
         # used before iterating through thresholds
-        ious = iouFgMat[gt_ind, pred_ind]
-        # sort iou values in descending order
-        sort = np.flip(np.argsort(ious))
+        locs = locFgMat[gt_ind, pred_ind]
+        # sort loc values in descending order
+        sort = np.flip(np.argsort(locs))
         gt_ind = gt_ind[sort]
         pred_ind = pred_ind[sort]
-        ious = ious[sort]
+        locs = locs[sort]
 
-        # assign greedy by iou score
-        for gt_idx, pred_idx, iou in zip(gt_ind, pred_ind, ious):
-            print(gt_idx, pred_idx, iou)
+        # assign greedy by loc score
+        for gt_idx, pred_idx, loc in zip(gt_ind, pred_ind, locs):
+            print(gt_idx, pred_idx, loc)
             if gt_idx not in tp_gt_ind and pred_idx not in tp_pred_ind:
                 tp_gt_ind.append(gt_idx)
                 tp_pred_ind.append(pred_idx)
@@ -426,7 +426,7 @@ def assign_labels(iouMat, assignment_strategy, thresh, num_matches):
 
 
 def get_false_labels(tp_pred_ind, tp_gt_ind, num_pred_labels, num_gt_labels,
-        iouMat, precMat, recallMat, thresh,
+        locMat, precMat, recallMat, thresh,
         overlapping_inst, unique_false_labels, recallMat_wo_overlap):
 
     # get false positive indices
@@ -460,18 +460,19 @@ def get_false_labels(tp_pred_ind, tp_gt_ind, num_pred_labels, num_gt_labels,
     # check if pred label covers more than one gt label with clDice > thresh
     # check if merger also exists when ignoring gt overlapping regions
     if overlapping_inst:
-        iou_mask = np.logical_and(
-                recallMat[1:, 1:] > thresh, recallMat_wo_overlap[1:, 1:] > thresh)
+        loc_mask = np.logical_and(
+            recallMat[1:, 1:] > thresh, recallMat_wo_overlap[1:, 1:] > thresh)
     else:
-        iou_mask = iouMat[1:, 1:] > thresh
-    fm_pred_count = np.maximum(0, np.sum(iou_mask, axis=0) - 1)
+        # todo: correct? not recallMat?
+        loc_mask = locMat[1:, 1:] > thresh
+    fm_pred_count = np.maximum(0, np.sum(loc_mask, axis=0) - 1)
     fm_count = np.sum(fm_pred_count)
     # we need fm_pred_ind and fm_gt_ind for visualization later on
     # correct indices to include background
     fm_pred_ind = np.nonzero(fm_pred_count)[0]
     fm_gt_ind = []
     for i in fm_pred_ind:
-        fm_gt_ind.append(np.nonzero(iou_mask[:, i])[0] + 1)
+        fm_gt_ind.append(np.nonzero(loc_mask[:, i])[0] + 1)
     fm_pred_ind = np.array(fm_pred_ind) + 1
     logger.debug("false merge indices (pred/gt/cnt): %s, %s, %i",
             fm_pred_ind, fm_gt_ind, fm_count)

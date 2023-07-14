@@ -244,7 +244,7 @@ def evaluate_volume(
     num_matches = min(num_gt_labels, num_pred_labels)
 
     # get localization criterion
-    iouMat, recallMat, precMat, recallMat_wo_overlap = \
+    locMat, recallMat, precMat, recallMat_wo_overlap = \
             compute_localization_criterion(
                     pred_labels_rel, gt_labels_rel,
                     num_pred_labels, num_gt_labels,
@@ -266,9 +266,9 @@ def evaluate_volume(
         metrics.addTable(tblname)
 
         # assign prediction to ground truth labels
-        if num_matches > 0 and np.max(iouMat) > th:
+        if num_matches > 0 and np.max(locMat) > th:
             tp, pred_ind, gt_ind = assign_labels(
-                    iouMat, assignment_strategy, th, num_matches)
+                locMat, assignment_strategy, th, num_matches)
         else:
             tp = 0
             pred_ind = []
@@ -281,7 +281,7 @@ def evaluate_volume(
             fp_ind, fn_ind, fs_ind, fm_pred_ind, fm_gt_ind, \
                     fm_count, fp_ind_only_bg = get_false_labels(
                             pred_ind, gt_ind, num_pred_labels, num_gt_labels,
-                            iouMat, precMat, recallMat, th,
+                            locMat, precMat, recallMat, th,
                             check_wo_overlap, unique_false_labels,
                             recallMat_wo_overlap
                             )
@@ -327,7 +327,7 @@ def evaluate_volume(
         if visualize and th == 0.5:
             if visualize_type == "nuclei" and tp > 0:
                 visualize_nuclei(
-                    gt_labels_rel, iouMat, gt_ind, pred_ind, th, outFn)
+                    gt_labels_rel, locMat, gt_ind, pred_ind, th, outFn)
             elif visualize_type == "neuron" and localization_criterion == "cldice":
                 visualize_neurons(
                     gt_labels_rel, pred_labels_rel, gt_ind, pred_ind,
