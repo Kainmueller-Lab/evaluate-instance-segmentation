@@ -13,19 +13,19 @@ logger = logging.getLogger(__name__)
 # - at least somewhat usable in case of color blindness
 # - no two colors should be too similar
 gt_cmap_ = [
-        "#88B04B", "#9F00A7", "#EFC050", "#34568B", "#E47A2E",
-        "#BC70A4", "#92A8D1", "#A3B18A", "#45B8AC", "#6B5B95",
-        "#F7CAC9", "#E8A798", "#9C9A40", "#9C4722", "#6B5876",
-        "#CE3175", "#00A591", "#EDD59E", "#1E7145", "#E9FF70",
-        ]
+    "#88B04B", "#9F00A7", "#EFC050", "#34568B", "#E47A2E",
+    "#BC70A4", "#92A8D1", "#A3B18A", "#45B8AC", "#6B5B95",
+    "#F7CAC9", "#E8A798", "#9C9A40", "#9C4722", "#6B5876",
+    "#CE3175", "#00A591", "#EDD59E", "#1E7145", "#E9FF70",
+]
 
 
 pred_cmap_ = [
-        "#FDAC53", "#9BB7D4", "#B55A30", "#F5DF4D", "#0072B5",
-        "#A0DAA9", "#E9897E", "#00A170", "#926AA6", "#EFE1CE",
-        "#9A8B4F", "#FFA500", "#56C6A9", "#4B5335", "#798EA4",
-        "#E0B589", "#00758F", "#FA7A35", "#578CA9", "#95DEE3"
-        ]
+    "#FDAC53", "#9BB7D4", "#B55A30", "#F5DF4D", "#0072B5",
+    "#A0DAA9", "#E9897E", "#00A170", "#926AA6", "#EFE1CE",
+    "#9A8B4F", "#FFA500", "#56C6A9", "#4B5335", "#798EA4",
+    "#E0B589", "#00758F", "#FA7A35", "#578CA9", "#95DEE3"
+]
 
 
 def rgb(idx, cmap):
@@ -139,42 +139,21 @@ def visualize_nuclei(
     vis_fp = vis_fp/np.max(vis_fp)
     vis_fn = vis_fn/np.max(vis_fn)
     with h5py.File(outFn + "_vis.hdf", 'w') as fi:
+        fi.create_dataset('volumes/vis_tp', data=vis_tp, compression='gzip')
+        fi.create_dataset('volumes/vis_fp', data=vis_fp, compression='gzip')
+        fi.create_dataset('volumes/vis_fn', data=vis_fn, compression='gzip')
         fi.create_dataset(
-            'volumes/vis_tp',
-            data=vis_tp,
-            compression='gzip')
+            'volumes/vis_tp_seg', data=vis_tp_seg, compression='gzip')
         fi.create_dataset(
-            'volumes/vis_fp',
-            data=vis_fp,
-            compression='gzip')
+            'volumes/vis_tp_seg2', data=vis_tp_seg2, compression='gzip')
         fi.create_dataset(
-            'volumes/vis_fn',
-            data=vis_fn,
-            compression='gzip')
+            'volumes/vis_fp_seg', data=vis_fp_seg, compression='gzip')
         fi.create_dataset(
-            'volumes/vis_tp_seg',
-            data=vis_tp_seg,
-            compression='gzip')
+            'volumes/vis_fn_seg', data=vis_fn_seg, compression='gzip')
         fi.create_dataset(
-            'volumes/vis_tp_seg2',
-            data=vis_tp_seg2,
-            compression='gzip')
+            'volumes/vis_fp_seg_bnd', data=vis_fp_seg_bnd, compression='gzip')
         fi.create_dataset(
-            'volumes/vis_fp_seg',
-            data=vis_fp_seg,
-            compression='gzip')
-        fi.create_dataset(
-            'volumes/vis_fn_seg',
-            data=vis_fn_seg,
-            compression='gzip')
-        fi.create_dataset(
-            'volumes/vis_fp_seg_bnd',
-            data=vis_fp_seg_bnd,
-            compression='gzip')
-        fi.create_dataset(
-            'volumes/vis_fn_seg_bnd',
-            data=vis_fn_seg_bnd,
-            compression='gzip')
+            'volumes/vis_fn_seg_bnd', data=vis_fn_seg_bnd, compression='gzip')
 
 
 def visualize_neurons(

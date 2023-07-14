@@ -82,8 +82,12 @@ class Metrics:
 
 
 def evaluate_file(
-        res_file, gt_file, res_key=None, gt_key=None,
-        out_dir=None, suffix="",
+        res_file,
+        gt_file,
+        res_key=None,
+        gt_key=None,
+        out_dir=None,
+        suffix="",
         localization_criterion="iou", # "iou", "cldice"
         assignment_strategy="hungarian", # "hungarian", "greedy", "gt_0_5"
         add_general_metrics=[],
@@ -123,14 +127,14 @@ def evaluate_file(
         remove_small_components = filterSz
 
     # put together output filename with suffix
-    outFn = get_output_name(out_dir, res_file, res_key, suffix,
-            localization_criterion, assignment_strategy,
-            remove_small_components)
+    outFn = get_output_name(
+        out_dir, res_file, res_key, suffix, localization_criterion,
+        assignment_strategy, remove_small_components)
 
     # if from_scratch is set, overwrite existing evaluation files
     # otherwise try to load precomputed metric
     if not kwargs.get("from_scratch") and \
-            len(glob.glob(outFn + ".toml")) > 0: # heads up: changed here from outFnBase *.toml
+       len(glob.glob(outFn + ".toml")) > 0:
         with open(outFn+".toml", 'r') as tomlFl:
             metrics = toml.load(tomlFl)
         if kwargs.get('metric', None) is None:
@@ -139,39 +143,44 @@ def evaluate_file(
             metric = metrics
             for k in kwargs['metric'].split('.'):
                 metric = metric[k]
-            logger.info('Skipping evaluation, already exists! %s',
-                        outFn)
+            logger.info('Skipping evaluation, already exists! %s', outFn)
             return metrics
         except KeyError:
-            logger.info("Error (key %s missing) in existing evaluation "
-                        "for %s. Recomputing!",
-                        kwargs['metric'], res_file)
+            logger.info(
+                "Error (key %s missing) in existing evaluation "
+                "for %s. Recomputing!", kwargs['metric'], res_file)
 
     # read preprocessed file
     pred_labels = read_file(res_file, res_key)
-    logger.debug("prediction min %f, max %f, shape %s", np.min(pred_labels),
-                 np.max(pred_labels), pred_labels.shape)
+    logger.debug(
+        "prediction min %f, max %f, shape %s", np.min(pred_labels),
+        np.max(pred_labels), pred_labels.shape)
     pred_labels = np.squeeze(pred_labels)
     logger.debug("prediction shape %s", pred_labels.shape)
 
     # read ground truth data
     gt_labels = read_file(gt_file, gt_key)
-    logger.debug("gt min %f, max %f, shape %s", np.min(gt_labels),
-                 np.max(gt_labels), gt_labels.shape)
+    logger.debug(
+        "gt min %f, max %f, shape %s", np.min(gt_labels),
+        np.max(gt_labels), gt_labels.shape)
 
     # check sizes and crop if necessary
     gt_labels, pred_labels = check_sizes(
-            gt_labels, pred_labels, overlapping_inst, **kwargs)
+        gt_labels, pred_labels, overlapping_inst,
+        kwargs.get("keep_gt_shape", False))
 
     # remove small components
     if remove_small_components is not None and remove_small_components > 0:
-        logger.info("call remove small components with filter size %i",
-                remove_small_components)
-        logger.debug("prediction %s, shape %s", np.unique(pred_labels),
-                     pred_labels.shape)
+        logger.info(
+            "call remove small components with filter size %i",
+            remove_small_components)
+        logger.debug(
+            "prediction %s, shape %s", np.unique(pred_labels),
+            pred_labels.shape)
         pred_labels = filter_components(pred_labels, remove_small_components)
-        logger.debug("prediction %s, shape %s", np.unique(pred_labels),
-                     pred_labels.shape)
+        logger.debug(
+            "prediction %s, shape %s", np.unique(pred_labels),
+            pred_labels.shape)
 
     # if foreground_only is selected, remove all predictions within gt background
     if foreground_only:
@@ -187,23 +196,25 @@ def evaluate_file(
             gt_labels[i] = gt_labels[i] * (i + 1)
 
     return evaluate_volume(
-            gt_labels, pred_labels, outFn,
-            localization_criterion,
-            assignment_strategy,
-            evaluate_false_labels,
-            unique_false_labels,
-            add_general_metrics,
-            visualize,
-            visualize_type,
-            overlapping_inst,
-            partly
-            )
+        gt_labels, pred_labels, outFn,
+        localization_criterion,
+        assignment_strategy,
+        evaluate_false_labels,
+        unique_false_labels,
+        add_general_metrics,
+        visualize,
+        visualize_type,
+        overlapping_inst,
+        partly
+    )
 
 
 # todo: should pixelwise neuron evaluation also be possible?
 # keep_gt_shape not in pixelwise overlap so far
 def evaluate_volume(
-        gt_labels, pred_labels, outFn,
+        gt_labels,
+        pred_labels,
+        outFn,
         localization_criterion="iou",
         assignment_strategy="hungarian",
         evaluate_false_labels=False,
@@ -245,10 +256,10 @@ def evaluate_volume(
 
     # get localization criterion
     locMat, recallMat, precMat, recallMat_wo_overlap = \
-            compute_localization_criterion(
-                    pred_labels_rel, gt_labels_rel,
-                    num_pred_labels, num_gt_labels,
-                    localization_criterion, overlapping_inst)
+        compute_localization_criterion(
+            pred_labels_rel, gt_labels_rel,
+            num_pred_labels, num_gt_labels,
+            localization_criterion, overlapping_inst)
 
     metrics = Metrics(outFn)
     tblNameGen = "general"
@@ -279,12 +290,12 @@ def evaluate_volume(
             check_wo_overlap = overlapping_inst or \
                     len(gt_labels_rel.shape) > len(pred_labels_rel.shape)
             fp_ind, fn_ind, fs_ind, fm_pred_ind, fm_gt_ind, \
-                    fm_count, fp_ind_only_bg = get_false_labels(
-                            pred_ind, gt_ind, num_pred_labels, num_gt_labels,
-                            locMat, precMat, recallMat, th,
-                            check_wo_overlap, unique_false_labels,
-                            recallMat_wo_overlap
-                            )
+                fm_count, fp_ind_only_bg = get_false_labels(
+                    pred_ind, gt_ind, num_pred_labels, num_gt_labels,
+                    locMat, precMat, recallMat, th,
+                    check_wo_overlap, unique_false_labels,
+                    recallMat_wo_overlap
+                )
 
         # get false positive and false negative counters
         if unique_false_labels:
@@ -327,8 +338,10 @@ def evaluate_volume(
         if visualize and th == 0.5:
             if visualize_type == "nuclei" and tp > 0:
                 visualize_nuclei(
-                    gt_labels_rel, locMat, gt_ind, pred_ind, th, outFn)
-            elif visualize_type == "neuron" and localization_criterion == "cldice":
+                    gt_labels_rel, pred_labels_rel, locMat, gt_ind, pred_ind,
+                    th, outFn)
+            elif visualize_type == "neuron" and \
+                 localization_criterion == "cldice":
                 visualize_neurons(
                     gt_labels_rel, pred_labels_rel, gt_ind, pred_ind,
                     outFn, fp_ind, fn_ind, fm_gt_ind)
@@ -363,13 +376,13 @@ def evaluate_volume(
                 for gt_i in np.arange(1, num_gt_labels + 1):
                     if gt_i in max_gt_ind_unique:
                         pred_union = np.zeros(
-                                pred_labels_rel.shape[1:],
-                                dtype=pred_labels_rel.dtype)
+                            pred_labels_rel.shape[1:],
+                            dtype=pred_labels_rel.dtype)
                         for pred_i in np.arange(num_pred_labels + 1)[max_gt_ind == gt_i]:
                             mask = pred_labels_rel[pred_i - 1] > 0
                             pred_union[mask] = 1
-                        gt_cov.append(get_centerline_overlap_single(gt_labels_rel,
-                                pred_union, gt_i, 1))
+                        gt_cov.append(get_centerline_overlap_single(
+                            gt_labels_rel, pred_union, gt_i, 1))
                     else:
                         gt_cov.append(0.0)
             else:
@@ -393,7 +406,8 @@ def evaluate_volume(
                 else:
                     tp_skel_coverage = 0
                 metrics.addMetric(tblNameGen, "tp_skel_coverage", tp_cov)
-                metrics.addMetric(tblNameGen, "avg_tp_skel_coverage", tp_skel_coverage)
+                metrics.addMetric(
+                    tblNameGen, "avg_tp_skel_coverage", tp_skel_coverage)
 
         if "avg_f1_cov_score" in add_general_metrics:
             avg_f1_cov_score = 0.5 * avFscore19 + 0.5 * gt_skel_coverage
@@ -483,7 +497,8 @@ def main():
     args = parser.parse_args()
 
     evaluate_file(
-        args.res_file, args.gt_file,
+        args.res_file,
+        args.gt_file,
         res_key=args.res_key,
         gt_key=args.gt_key,
         out_dir=args.out_dir,
