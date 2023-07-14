@@ -12,6 +12,14 @@ logger = logging.getLogger(__name__)
 
 
 def maybe_crop(pred_labels, gt_labels, overlapping_inst=False):
+    """check if prediction and gt have same size, otherwise crop the bigger one
+
+    E.g., if valid padding is used output might be smaller than input.
+
+    Note
+    ----
+    only crops spatial dimensions, assumes channel_first
+    """
     if overlapping_inst:
         if gt_labels.shape[1:] == pred_labels.shape[1:]:
             return pred_labels, gt_labels
@@ -134,6 +142,7 @@ def check_sizes(gt_labels, pred_labels, overlapping_inst, **kwargs):
 def get_output_name(out_dir, res_file, res_key, suffix,
         localization_criterion, assignment_strategy,
         remove_small_components):
+    """constructs output file name based on used eval strategy"""
     outFnBase = os.path.join(
         out_dir,
         os.path.splitext(os.path.basename(res_file))[0] +
@@ -151,6 +160,7 @@ def get_output_name(out_dir, res_file, res_key, suffix,
     return outFn
 
 def replace(array, old_values, new_values):
+    """fast function to replace set of values in array with new values"""
     values_map = np.arange(int(array.max() + 1), dtype=new_values.dtype)
     values_map[old_values] = new_values
 
@@ -158,7 +168,7 @@ def replace(array, old_values, new_values):
 
 
 def filter_components(volume, thresh):
-
+    """remove instances smaller than `thresh` pixels"""
     labels, counts = np.unique(volume, return_counts=True)
     small_labels = labels[counts <= thresh]
 
@@ -169,8 +179,12 @@ def filter_components(volume, thresh):
     )
     return volume
 
-def get_centerline_overlap_single(skeletonize, compare,
+def get_centerline_overlap_single(
+        skeletonize, compare,
         skeletonize_label, compare_label):
+    """skeletonizes `to_skeletonize` and checks how much overlap
+    `compare_with` has with the skeletons, for a single pair of labels)
+    """
     mask = skeletonize == skeletonize_label
     if mask.ndim == 4:
         mask = np.max(mask, axis=0)
@@ -183,23 +197,27 @@ def get_centerline_overlap_single(skeletonize, compare,
     return np.sum(mask[skeleton]) / float(skeleton_size)
 
 
-def get_centerline_overlap(skeletonize, compare, match):
+def get_centerline_overlap(to_skeletonize, compare_with, match):
+    """skeletonizes `to_skeletonize` and checks how much overlap
+    `compare_with` has with the skeletons, for all pairs of labels
+    (incl. the background label in `compare_with`)
+    """
     # heads up: only implemented for 3d data
-    skeleton_one_inst_per_channel = True if skeletonize.ndim == 4 else False
-    compare_one_inst_per_channel = True if compare.ndim == 4 else False
+    skeleton_one_inst_per_channel = True if to_skeletonize.ndim == 4 else False
+    compare_one_inst_per_channel = True if compare_with.ndim == 4 else False
 
     if compare_one_inst_per_channel:
-        fg = np.max(compare > 0, axis=0).astype(np.uint8)
+        fg = np.max(compare_with > 0, axis=0).astype(np.uint8)
 
-    labels = np.unique(skeletonize[skeletonize > 0])
+    labels = np.unique(to_skeletonize[to_skeletonize > 0])
 
     for label in labels:
         logger.debug("compute centerline overlap for %i", label)
         if skeleton_one_inst_per_channel:
             #idx = np.unravel_index(np.argmax(mask), mask.shape)[0]
-            mask = skeletonize[label - 1] #heads up: assuming increasing labels
+            mask = to_skeletonize[label - 1] #heads up: assuming increasing labels
         else:
-            mask = skeletonize == label
+            mask = to_skeletonize == label
         skeleton = skeletonize_3d(mask) > 0
         skeleton_size = np.sum(skeleton)
 
@@ -230,6 +248,10 @@ def get_centerline_overlap(skeletonize, compare, match):
 def compute_localization_criterion(pred_labels_rel, gt_labels_rel,
         num_pred_labels, num_gt_labels,
         localization_criterion, overlapping_inst):
+    """computes the localization part of the metric
+    For each pair of labels in the prediction and gt,
+    how much are they co-localized, based on the chosen criterion?
+    """
     logger.debug("evaluate localization criterion for all gt and pred label pairs")
 
     # create matrices for pixelwise overlap measures
@@ -336,13 +358,18 @@ def compute_localization_criterion(pred_labels_rel, gt_labels_rel,
 
 
 def assign_labels(iouMat, assignment_strategy, thresh, num_matches):
-    """
-    Assigns prediction and gt labels
+    """match (assign) prediction and gt labels
 
-            Returns:
-                    tp (int): number of true positive matches
-                    pred_ind (list of ints): pred labels that are matched as true positives (tp)
-                    gt_ind (list of ints): gt labels that are matched as tp
+    Returns
+    -------
+    tp (int): number of true positive matches
+    pred_ind (list of ints): pred labels that are matched as true positives (tp)
+    gt_ind (list of ints): gt labels that are matched as tp
+
+    Note
+    ----
+    lists have same length and x-th element in pred_ind list is matched to
+    x-th element in gt_ind list
     """
     tp_pred_ind = []
     tp_gt_ind = []
