@@ -244,7 +244,7 @@ def evaluate_volume(
     num_matches = min(num_gt_labels, num_pred_labels)
 
     # get localization criterion
-    iouMat, recallMat, precMat, fscoreMat, recallMat_wo_overlap = \
+    iouMat, recallMat, precMat, recallMat_wo_overlap = \
             compute_localization_criterion(
                     pred_labels_rel, gt_labels_rel,
                     num_pred_labels, num_gt_labels,

@@ -239,8 +239,6 @@ def compute_localization_criterion(pred_labels_rel, gt_labels_rel,
                          dtype=np.float32)
     precMat = np.zeros((num_gt_labels+1, num_pred_labels+1),
                        dtype=np.float32)
-    fscoreMat = np.zeros((num_gt_labels+1, num_pred_labels+1),
-                         dtype=np.float32)
     iouMat_wo_overlap = None
     recallMat_wo_overlap = None
 
@@ -294,8 +292,6 @@ def compute_localization_criterion(pred_labels_rel, gt_labels_rel,
             iouMat[v, u] = iou
             recallMat[v, u] = c / gt_labels_count_dict[v]
             precMat[v, u] = c / pred_labels_count_dict[u]
-            fscoreMat[v, u] = 2 * (precMat[v, u] * recallMat[v, u]) / \
-                                  (precMat[v, u] + recallMat[v, u])
 
     # centerline dice
     elif localization_criterion == "cldice":
@@ -335,8 +331,8 @@ def compute_localization_criterion(pred_labels_rel, gt_labels_rel,
         iouMat = np.nan_to_num(2 * precMat * recallMat / (precMat + recallMat))
     else:
         raise NotImplementedError
-    print(iouMat.shape, recallMat.shape, precMat.shape, fscoreMat.shape)
-    return iouMat, recallMat, precMat, fscoreMat, recallMat_wo_overlap
+    print(iouMat.shape, recallMat.shape, precMat.shape)
+    return iouMat, recallMat, precMat, recallMat_wo_overlap
 
 
 def assign_labels(iouMat, assignment_strategy, thresh, num_matches):
