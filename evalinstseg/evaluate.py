@@ -9,12 +9,14 @@ from skimage.segmentation import relabel_sequential
 import toml
 
 from .util import (
-    read_file,
-    check_sizes,
-    get_output_name,
-    get_centerline_overlap_single,
-    compute_localization_criterion,
     assign_labels,
+    check_sizes,
+    compute_localization_criterion,
+    filter_components,
+    get_centerline_overlap_single,
+    get_false_labels,
+    get_output_name,
+    read_file,
 )
 from .visualize import (
     visualize_neurons,
@@ -49,8 +51,8 @@ class Metrics:
         """add new sub-table to result dict
 
         pass name containing '.' for nested tables,
-        e.g., passing "confusion_matrix.th_0.5" results in:
-        `dict = {"confusion_matrix": {"th_0.5": result}}`
+        e.g., passing "confusion_matrix.th_0_5" results in:
+        `dict = {"confusion_matrix": {"th_0_5": result}}`
         """
         levels = name.split(".")
         if dct is None:
@@ -99,6 +101,8 @@ def evaluate_file(
         remove_small_components=None,
         evaluate_false_labels=False,
         unique_false_labels=False,
+        check_for_metric=None,
+        from_scratch=False,
         **kwargs
 ):
     """computes segmentation quality of file wrt. its ground truth
@@ -126,29 +130,31 @@ def evaluate_file(
     if filterSz is not None and filterSz > 0:
         remove_small_components = filterSz
 
-    # put together output filename with suffix
+    # put together output filename
     outFn = get_output_name(
         out_dir, res_file, res_key, suffix, localization_criterion,
         assignment_strategy, remove_small_components)
 
     # if from_scratch is set, overwrite existing evaluation files
-    # otherwise try to load precomputed metric
-    if not kwargs.get("from_scratch") and \
+    # otherwise try to load precomputed metrics
+    #   if check_for_metric is None, just check if matching file exists
+    #   otherwise check if check_for_metric is contained within file
+    if not from_scratch and \
        len(glob.glob(outFn + ".toml")) > 0:
         with open(outFn+".toml", 'r') as tomlFl:
             metrics = toml.load(tomlFl)
-        if kwargs.get('metric', None) is None:
+        if check_for_metric is None:
             return metrics
         try:
             metric = metrics
-            for k in kwargs['metric'].split('.'):
+            for k in check_for_metric.split('.'):
                 metric = metric[k]
             logger.info('Skipping evaluation, already exists! %s', outFn)
             return metrics
         except KeyError:
             logger.info(
                 "Error (key %s missing) in existing evaluation "
-                "for %s. Recomputing!", kwargs['metric'], res_file)
+                "for %s. Recomputing!", check_for_metric, res_file)
 
     # read preprocessed file
     pred_labels = read_file(res_file, res_key)
@@ -247,7 +253,9 @@ def evaluate_volume(
     pred_labels_rel, _, _ = relabel_sequential(pred_labels.astype(int))
     gt_labels_rel, _, _ = relabel_sequential(gt_labels)
 
-    print("check for overlap: ", np.sum(np.sum(gt_labels_rel > 0, axis=0) > 1))
+    logger.debug(
+        f"are there pixels with multiple instances?: "
+        "{np.sum(np.sum(gt_labels_rel > 0, axis=0) > 1}")
 
     # get number of labels
     num_pred_labels = int(np.max(pred_labels_rel))
@@ -288,7 +296,7 @@ def evaluate_volume(
         # get labels for each segmentation error
         if evaluate_false_labels == True or visualize == True:
             check_wo_overlap = overlapping_inst or \
-                    len(gt_labels_rel.shape) > len(pred_labels_rel.shape)
+                len(gt_labels_rel.shape) > len(pred_labels_rel.shape)
             fp_ind, fn_ind, fs_ind, fm_pred_ind, fm_gt_ind, \
                 fm_count, fp_ind_only_bg = get_false_labels(
                     pred_ind, gt_ind, num_pred_labels, num_gt_labels,
@@ -344,7 +352,8 @@ def evaluate_volume(
                  localization_criterion == "cldice":
                 visualize_neurons(
                     gt_labels_rel, pred_labels_rel, gt_ind, pred_ind,
-                    outFn, fp_ind, fn_ind, fm_gt_ind)
+                    outFn, fp_ind, fs_ind, fn_ind, fm_gt_ind, fm_pred_ind,
+                    fp_ind_only_bg)
             else:
                 raise NotImplementedError
 
@@ -363,7 +372,9 @@ def evaluate_volume(
     # additional metrics
     if len(add_general_metrics) > 0:
         # get coverage for ground truth instances
-        if "avg_gt_skel_coverage" in add_general_metrics:
+        if "avg_gt_skel_coverage" in add_general_metrics or \
+           "avg_tp_skel_coverage" in add_general_metrics or \
+           "avg_f1_cov_score" in add_general_metrics:
             # only take max gt label for each pred label to not count
             # pred labels twice for overlapping gt instances
             max_gt_ind = np.argmax(precMat, axis=0)
@@ -394,20 +405,22 @@ def evaluate_volume(
                 else:
                     gt_cov = np.sum(recallMat[1:, 1:], axis=1)
             gt_skel_coverage = np.mean(gt_cov)
+
+        if "avg_gt_skel_coverage" in add_general_metrics:
             metrics.addMetric(tblNameGen, "gt_skel_coverage", gt_cov)
             metrics.addMetric(tblNameGen, "avg_gt_skel_coverage", gt_skel_coverage)
 
-            # get coverage for true positive ground truth instances (> 0.5)
-            if "avg_tp_skel_coverage" in add_general_metrics:
-                gt_cov = np.array(gt_cov)
-                tp_cov = gt_cov[gt_cov > 0.5]
-                if len(tp_cov) > 0:
-                    tp_skel_coverage = np.mean(tp_cov)
-                else:
-                    tp_skel_coverage = 0
-                metrics.addMetric(tblNameGen, "tp_skel_coverage", tp_cov)
-                metrics.addMetric(
-                    tblNameGen, "avg_tp_skel_coverage", tp_skel_coverage)
+        # get coverage for true positive ground truth instances (> 0.5)
+        if "avg_tp_skel_coverage" in add_general_metrics:
+            gt_cov = np.array(gt_cov)
+            tp_cov = gt_cov[gt_cov > 0.5]
+            if len(tp_cov) > 0:
+                tp_skel_coverage = np.mean(tp_cov)
+            else:
+                tp_skel_coverage = 0
+            metrics.addMetric(tblNameGen, "tp_skel_coverage", tp_cov)
+            metrics.addMetric(
+                tblNameGen, "avg_tp_skel_coverage", tp_skel_coverage)
 
         if "avg_f1_cov_score" in add_general_metrics:
             avg_f1_cov_score = 0.5 * avFscore19 + 0.5 * gt_skel_coverage

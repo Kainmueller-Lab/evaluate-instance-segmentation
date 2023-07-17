@@ -224,7 +224,7 @@ def get_centerline_overlap(to_skeletonize, compare_with, match):
                 fg[skeleton], return_counts=True)
             if np.any(compare_fg > 0):
                 compare_label, compare_label_cnt = np.unique(
-                    compare[:, skeleton], return_counts=True)
+                    compare_with[:, skeleton], return_counts=True)
                 if np.any(compare_label == 0):
                     compare_label[0] = compare_fg[0]
                     compare_label_cnt[0] = compare_fg_cnt[0]
@@ -233,7 +233,7 @@ def get_centerline_overlap(to_skeletonize, compare_with, match):
                 compare_label_cnt = compare_fg_cnt
         else:
             compare_label, compare_label_cnt = np.unique(
-                compare[skeleton], return_counts=True)
+                compare_with[skeleton], return_counts=True)
         ratio = compare_label_cnt / float(skeleton_size)
         match[label, compare_label] = ratio
 
@@ -255,13 +255,11 @@ def compute_localization_criterion(
     locMat = np.zeros((num_gt_labels+1, num_pred_labels+1), dtype=np.float32)
     recallMat = np.zeros((num_gt_labels+1, num_pred_labels+1), dtype=np.float32)
     precMat = np.zeros((num_gt_labels+1, num_pred_labels+1), dtype=np.float32)
-    locMat_wo_overlap = None
     recallMat_wo_overlap = None
 
     # intersection over union
     if localization_criterion == "iou":
         logger.debug("compute iou")
-        print(overlapping_inst, pred_labels_rel.shape, gt_labels_rel.shape)
         # todo: implement iou for keep_gt_shape
         if overlapping_inst:
             pred_tile = [1, ] * pred_labels_rel.ndim
@@ -331,21 +329,12 @@ def compute_localization_criterion(
             else:
                 pred_wo_overlap[mask] = 0
 
-            # precMat_wo_overlap = get_centerline_overlap(
-            #     pred_wo_overlap, gt_wo_overlap,
-            #     np.transpose(np.zeros_like(precMat)))
-            # precMat_wo_overlap = np.transpose(precMat_wo_overlap)
             recallMat_wo_overlap = get_centerline_overlap(
                 gt_wo_overlap, pred_wo_overlap,
                 np.zeros_like(recallMat))
-            # locMat_wo_overlap = np.nan_to_num(
-            #     2 * precMat_wo_overlap * recallMat_wo_overlap / (
-            #         precMat_wo_overlap + recallMat_wo_overlap)
-            # )
         locMat = np.nan_to_num(2 * precMat * recallMat / (precMat + recallMat))
     else:
         raise NotImplementedError
-    print(locMat.shape, recallMat.shape, precMat.shape)
     return locMat, recallMat, precMat, recallMat_wo_overlap
 
 
@@ -397,7 +386,6 @@ def assign_labels(locMat, assignment_strategy, thresh, num_matches):
 
         # assign greedy by loc score
         for gt_idx, pred_idx, loc in zip(gt_ind, pred_ind, locs):
-            print(gt_idx, pred_idx, loc)
             if gt_idx not in tp_gt_ind and pred_idx not in tp_pred_ind:
                 tp_gt_ind.append(gt_idx)
                 tp_pred_ind.append(pred_idx)
@@ -407,7 +395,7 @@ def assign_labels(locMat, assignment_strategy, thresh, num_matches):
     #elif assignment_strategy == "overlap_0_5":
     else:
         raise NotImplementedError(
-            "assignment strategy %s is not implemented yet",
+            "assignment strategy %s is not implemented (yet)",
             assignment_strategy)
 
     # correct indices to include background
@@ -428,7 +416,7 @@ def get_false_labels(
         pred_ind_all, tp_pred_ind, invert=True)]
     fp_ind_only_bg = pred_ind_unassigned[np.argmax(
         precMat[:, pred_ind_unassigned], axis=0) == 0]
-    if unique_false_labels == False:
+    if not unique_false_labels:
         # all unassigned pred labels
         fp_ind = pred_ind_unassigned
     else:

@@ -158,9 +158,14 @@ def visualize_nuclei(
 
 def visualize_neurons(
         gt_labels_rel, pred_labels_rel, gt_ind, pred_ind, outFn,
-        fp_ind, fn_ind, fm_gt_ind):
-    """visualize neuron (tree-like) segmentation results"""
-    # unused: fs_ind , fm_pred_ind, fp_ind_only_bg
+        fp_ind, fs_ind, fn_ind, fm_gt_ind, fm_pred_ind, fp_ind_only_bg):
+    """visualize neuron (tree-like) segmentation results
+
+    Note
+    ----
+    currently unused: unused: fs_ind , fm_pred_ind, fp_ind_only_bg
+    """
+
     if len(gt_labels_rel.shape) == 4:
         gt = np.max(gt_labels_rel, axis=0)
     else:
@@ -169,7 +174,6 @@ def visualize_neurons(
         pred = np.max(pred_labels_rel, axis=0)
     else:
         pred = pred_labels_rel
-    print(pred_ind, gt_ind)
     num_gt = np.max(gt_labels_rel)
     num_pred = np.max(pred_labels_rel)
     dst = np.zeros_like(gt, dtype=np.uint8)
