@@ -201,7 +201,7 @@ def evaluate_file(
         for i in range(gt_labels.shape[0]):
             gt_labels[i] = gt_labels[i] * (i + 1)
 
-    return evaluate_volume(
+    metrics = evaluate_volume(
         gt_labels, pred_labels, outFn,
         localization_criterion,
         assignment_strategy,
@@ -213,6 +213,7 @@ def evaluate_file(
         overlapping_inst,
         partly
     )
+    metrics.save()
 
 
 # todo: should pixelwise neuron evaluation also be possible?
@@ -426,7 +427,6 @@ def evaluate_volume(
             avg_f1_cov_score = 0.5 * avFscore19 + 0.5 * gt_skel_coverage
             metrics.addMetric(tblNameGen, "avg_f1_cov_score", avg_f1_cov_score)
 
-    metrics.save()
     return metrics.metricsDict
 
 

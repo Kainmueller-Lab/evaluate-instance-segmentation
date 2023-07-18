@@ -215,7 +215,7 @@ def get_centerline_overlap(to_skeletonize, compare_with, match):
             mask = to_skeletonize[label - 1] #heads up: assuming increasing labels
         else:
             mask = to_skeletonize == label
-        skeleton = skeletonize_3d(mask) > 0
+        skeleton = skeletonize_3d(mask.astype(np.uint8)) > 0
         skeleton_size = np.sum(skeleton)
 
         # if one instance per channel for compare, we need to correct bg label
@@ -332,7 +332,10 @@ def compute_localization_criterion(
             recallMat_wo_overlap = get_centerline_overlap(
                 gt_wo_overlap, pred_wo_overlap,
                 np.zeros_like(recallMat))
+        err = np.geterr()
+        np.seterr(invalid='ignore')
         locMat = np.nan_to_num(2 * precMat * recallMat / (precMat + recallMat))
+        np.seterr(invalid=err['invalid'])
     else:
         raise NotImplementedError
     return locMat, recallMat, precMat, recallMat_wo_overlap

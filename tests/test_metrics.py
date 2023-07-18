@@ -1,9 +1,10 @@
-import unittest
 import os
-import numpy as np
-from skimage.morphology import skeletonize_3d
+import unittest
 
-from evaluateInstanceSegmentation import evaluate_file, evaluate_volume
+import numpy as np
+
+from evalinstseg import evaluate_volume
+
 
 # work in progress
 class TestMetrics(unittest.TestCase):
