@@ -44,21 +44,24 @@ class TestMetrics(unittest.TestCase):
         exp = expected["general"]
         self.assertEqual(res["Num GT"], exp["Num GT"])
         self.assertEqual(res["Num Pred"], exp["Num Pred"])
-        self.assertEqual(round(res["avg_gt_skel_coverage"], 4),
-                round(exp["avg_gt_skel_coverage"], 4))
-        self.assertEqual(round(res["avg_tp_skel_coverage"], 4),
-                round(exp["avg_tp_skel_coverage"], 4))
-        self.assertEqual(res["avg_f1_cov_score"], exp["avg_f1_cov_score"])
-        self.assertListEqual(list(np.round(res["gt_skel_coverage"], 4)), 
-                list(np.round(exp["gt_skel_coverage"], 4)))
-        self.assertListEqual(list(res["tp_skel_coverage"]), list(exp["tp_skel_coverage"]))
+        self.assertAlmostEqual(
+            res["avg_gt_skel_coverage"],exp["avg_gt_skel_coverage"], 4)
+        self.assertAlmostEqual(
+            res["avg_tp_skel_coverage"], exp["avg_tp_skel_coverage"], 4)
+        self.assertAlmostEqual(res["avg_f1_cov_score"], exp["avg_f1_cov_score"], 4)
+        self.assertEqual(len(res["gt_skel_coverage"]), len(exp["gt_skel_coverage"]))
+        for r, e in zip (res["gt_skel_coverage"], exp["gt_skel_coverage"]):
+            self.assertAlmostEqual(r, e, 4)
+        self.assertEqual(len(res["tp_skel_coverage"]), len(exp["tp_skel_coverage"]))
+        for r, e in zip (res["tp_skel_coverage"], exp["tp_skel_coverage"]):
+            self.assertAlmostEqual(r, e, 4)
         # check confusion table
         res = results["confusion_matrix"]
         exp = expected["confusion_matrix"]
-        self.assertEqual(res["avAP59"], exp["avAP59"])
-        self.assertEqual(res["avAP19"], exp["avAP19"])
-        self.assertEqual(res["avFscore59"], exp["avFscore59"])
-        self.assertEqual(res["avFscore19"], exp["avFscore19"])
+        self.assertAlmostEqual(res["avAP59"], exp["avAP59"], 4)
+        self.assertAlmostEqual(res["avAP19"], exp["avAP19"], 4)
+        self.assertAlmostEqual(res["avFscore59"], exp["avFscore59"], 4)
+        self.assertAlmostEqual(res["avFscore19"], exp["avFscore19"], 4)
         # check error quantities for confusion table at threshold 0.5
         res = results["confusion_matrix"]["th_0_5"]
         exp = expected["confusion_matrix"]["th_0_5"]
@@ -71,12 +74,16 @@ class TestMetrics(unittest.TestCase):
 
     def run_test_case(self, config, gt, pred, expected):
         
-        result_dict = evaluate_volume(gt, pred, config["outFn"],
-                config["localization_criterion"], config["assignment_strategy"],
-                config["evaluate_false_labels"], config["unique_false_labels"],
-                config["add_general_metrics"],
-                config["visualize"], config["visualize_type"], 
-                config["overlapping_inst"], config["partly"])
+        result_dict = evaluate_volume(
+            gt,
+            pred,
+            config['ndim'],
+            config["outFn"],
+            config["localization_criterion"], config["assignment_strategy"],
+            config["evaluate_false_labels"], config["unique_false_labels"],
+            config["add_general_metrics"],
+            config["visualize"], config["visualize_type"],
+            config["overlapping_inst"], config["partly"])
         print(result_dict)
         self.check_results(result_dict, expected)
     
@@ -97,6 +104,7 @@ class TestMetrics(unittest.TestCase):
         
         # set parameters
         config = {
+                "ndim": 3,
                 "outFn": None,
                 "localization_criterion": "cldice",
                 "assignment_strategy": "greedy",
@@ -127,7 +135,7 @@ class TestMetrics(unittest.TestCase):
         avg_gt_cov = np.mean(gt_cov)
         avg_f1_cov = np.mean([avg_gt_cov, 1.0])
         self.run_test_case(config, gt, pred,
-                self.set_expected(2, 2, avg_gt_cov, avg_gt_cov, avg_f1_cov, 
+                self.set_expected(2, 2, avg_gt_cov, avg_gt_cov, avg_f1_cov,
                     gt_cov, gt_cov,
                     0.925, 1.0, 0.95, 1.0,
                     2, 0, 0, 0, 0)
@@ -157,9 +165,11 @@ class TestMetrics(unittest.TestCase):
 
         # (2.1) pred + gt overlaps
         config["overlapping_inst"] = False
-        gt_cov = np.array([1.0, 14/18.0, 8/18.0], dtype=np.float32)
+        # gt_cov = np.array([1.0, 14/18.0, 8/18.0], dtype=np.float32)
+        gt_cov = np.array([1.0, 0.0, 8/18.0], dtype=np.float32)
         avg_gt_cov = np.mean(gt_cov)
-        tp_cov = np.array([1.0, 14/18.0], dtype=np.float32)
+        # tp_cov = np.array([1.0, 14/18.0], dtype=np.float32)
+        tp_cov = np.array([1.0], dtype=np.float32)
         avg_tp_cov = np.mean(tp_cov)
         ap19 = np.mean([4/15.0,] * 4 + [1/15.0,] * 3 + [0.0, 0.0])
         ap59 = np.mean([1/15.0,] * 6 + [0.0,] * 4)

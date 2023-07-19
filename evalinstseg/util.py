@@ -5,14 +5,44 @@ import h5py
 import numpy as np
 from scipy.optimize import linear_sum_assignment
 from skimage.morphology import skeletonize_3d
+from skimage.segmentation import relabel_sequential
 import tifffile
 import zarr
 
 logger = logging.getLogger(__name__)
 
 
-def maybe_crop(pred_labels, gt_labels, overlapping_inst=False):
+def crop(arr, shape):
+    """center-crop arr to shape
+
+    Args
+    ----
+    arr: ndarray
+        data
+    shape: list of int
+        crop data to this shape, only last len(shape) dims
+
+    Returns
+    -------
+    cropped array
+    """
+
+    target_shape = arr.shape()[:-len(shape)] + shape
+
+    offset = tuple(
+        (a - b)//2
+        for a, b in zip(arr.shape(), target_shape))
+
+    slices = tuple(
+        slice(o, o + s)
+        for o, s in zip(offset, target_shape))
+
+    return arr[slices]
+
+
+def check_and_fix_sizes(gt_labels, pred_labels, ndim):
     """check if prediction and gt have same size, otherwise crop the bigger one
+    add channel dimension if missing (channel_first)
 
     E.g., if valid padding is used output might be smaller than input.
 
@@ -20,77 +50,115 @@ def maybe_crop(pred_labels, gt_labels, overlapping_inst=False):
     ----
     only crops spatial dimensions, assumes channel_first
     """
-    if overlapping_inst:
-        if gt_labels.shape[1:] == pred_labels.shape[1:]:
-            return pred_labels, gt_labels
-        else:
-            if gt_labels.shape == pred_labels.shape:
-                return pred_labels, gt_labels
-            if gt_labels.shape[-1] > pred_labels.shape[-1]:
-                bigger_arr = gt_labels
-                smaller_arr = pred_labels
-                swapped = False
-            else:
-                bigger_arr = pred_labels
-                smaller_arr = gt_labels
-                swapped = True
+    # add channel dim if not there already
+    if gt_labels.ndim == ndim:
+        logger.debug("adding channel dim to gt")
+        gt_labels = np.expand_dims(gt_labels, axis=0)
+    if pred_labels.ndim == ndim:
+        logger.debug("adding channel dim to pred")
+        pred_labels = np.expand_dims(pred_labels, axis=0)
 
-            begin = (np.array(bigger_arr.shape[-2:]) -
-                     np.array(smaller_arr.shape[-2:])) // 2
-            end = np.array(bigger_arr.shape[-2:]) - begin
-            if (np.array(bigger_arr.shape[-2:]) -
-                np.array(smaller_arr.shape[-2:]))[-1] % 2 == 1:
-                end[-1] -= 1
-            if (np.array(bigger_arr.shape[-2:]) -
-                np.array(smaller_arr.shape[-2:]))[-2] % 2 == 1:
-                end[-2] -= 1
-            bigger_arr = bigger_arr[...,
-                                    begin[0]:end[0],
-                                    begin[1]:end[1]]
-            if not swapped:
-                gt_labels = bigger_arr
-                pred_labels = smaller_arr
-            else:
-                pred_labels = bigger_arr
-                gt_labels = smaller_arr
-            logger.debug("gt shape cropped %s", gt_labels.shape)
-            logger.debug("pred shape cropped %s", pred_labels.shape)
+    if gt_labels.shape[-ndim:] == pred_labels.shape[-ndim:]:
+        logger.debug("no cropping necessary")
+        return gt_labels, pred_labels
 
-            return pred_labels, gt_labels
+    if np.all([gt_s <= p_s for gt_s, p_s in zip(
+            gt_labels.shape[-ndim:], pred_labels.shape[-ndim:])]):
+        pred_labels = crop(pred_labels, gt_labels.shape[-ndim:])
+    elif np.all([p_s <= gt_s for gt_s, p_s in zip(
+            gt_labels.shape[-ndim:], pred_labels.shape[-ndim:])]):
+        gt_labels = crop(gt_labels, pred_labels.shape[-ndim:])
     else:
-        if gt_labels.shape == pred_labels.shape:
-            return pred_labels, gt_labels
-        if gt_labels.shape[0] > pred_labels.shape[0]:
-            bigger_arr = gt_labels
-            smaller_arr = pred_labels
-            swapped = False
-        else:
-            bigger_arr = pred_labels
-            smaller_arr = gt_labels
-            swapped = True
-        begin = (np.array(bigger_arr.shape) -
-                 np.array(smaller_arr.shape)) // 2
-        end = np.array(bigger_arr.shape) - begin
-        if len(bigger_arr.shape) == 2:
-            bigger_arr = bigger_arr[begin[0]:end[0],
-                                    begin[1]:end[1]]
-        else:
-            if (np.array(bigger_arr.shape) -
-                np.array(smaller_arr.shape))[2] % 2 == 1:
-                end[2] -= 1
-            bigger_arr = bigger_arr[begin[0]:end[0],
-                                    begin[1]:end[1],
-                                    begin[2]:end[2]]
-        if not swapped:
-            gt_labels = bigger_arr
-            pred_labels = smaller_arr
-        else:
-            pred_labels = bigger_arr
-            gt_labels = smaller_arr
-        logger.debug("gt shape cropped %s", gt_labels.shape)
-        logger.debug("pred shape cropped %s", pred_labels.shape)
+        raise RuntimeError(
+            "gt is bigger in some spatial dims, pred in others, unable to "
+            "crop to same shape")
 
-        return pred_labels, gt_labels
+    logger.debug("gt shape cropped %s", gt_labels.shape)
+    logger.debug("pred shape cropped %s", pred_labels.shape)
+
+    return gt_labels, pred_labels
+
+
+def binary_masks_to_uniq_ids(labels):
+    """if label array has binary masks per channel, relabel to unique ids"""
+    assert np.max(labels) <= 1, "labels is not a binary mask"
+    labels = labels.astype(np.min_scalar_type(labels.shape[0]))
+    for i in range(labels.shape[0]):
+        labels[i] = labels[i] * (i + 1)
+
+    return labels
+
+
+def remove_empty_channels(labels):
+    if labels.shape[0] == 1:
+        return labels
+
+    tmp_labels = []
+    for i in range(labels.shape[0]):
+        if np.max(labels[i]) > 0:
+            tmp_labels.append(labels[i])
+
+    return np.array(tmp_labels)
+
+
+def check_fix_and_unify_ids(
+        gt_labels, pred_labels, remove_small_components, foreground_only):
+    """unify prediction and gt labelling styles
+
+    Note
+    ----
+    labelling should be
+     - sequential, starting at 1 (background = 0)
+     - if stored in multiple channels
+       - masks in each channel should still have unique id
+    """
+    assert np.min(gt_labels) >= 0, "found negative ids in gt label array"
+    assert np.min(pred_labels) >= 0, "found negative ids in pred label array"
+    if np.max(gt_labels) == 0:
+        logger.warning("gt label array is empty")
+    if np.max(pred_labels) == 0:
+        logger.warning("pred label array is empty")
+
+    # optional: remove small components
+    if remove_small_components is not None and remove_small_components > 0:
+        logger.info(
+            "remove small components with size < %i", remove_small_components)
+        pred_labels = filter_components(pred_labels, remove_small_components)
+
+    # optional:if foreground_only, remove all predictions within gt background
+    # (rarely useful)
+    if foreground_only:
+        if (pred_labels.shape[0] == 1 and
+            np.all(
+                [ps == gs
+                 for ps, gs in zip(pred_labels.shape, gt_labels.shape)])):
+            pred_labels[gt_labels==0] = 0
+        else:
+            pred_labels[:, np.all(gt_labels, axis=0).astype(int)==0] = 0
+
+    # after filtering, some channels might be empty
+    pred_labels = remove_empty_channels(pred_labels)
+    gt_labels = remove_empty_channels(gt_labels)
+
+    # if each channel is a binary mask, still assign a unique id to each
+    if np.max(pred_labels) == 1:
+        pred_labels = binary_masks_to_uniq_ids(pred_labels)
+    if np.max(gt_labels) == 1:
+        gt_labels = binary_masks_to_uniq_ids(gt_labels)
+
+    # relabel labels sequentially
+    offset = 1
+    for i in range(pred_labels.shape[0]):
+        pred_labels[i], _, _ = relabel_sequential(
+            pred_labels[i].astype(int), offset)
+        offset = np.max(pred_labels[i]) + 1
+    offset = 1
+    for i in range(gt_labels.shape[0]):
+        gt_labels[i], _, _ = relabel_sequential(
+            gt_labels[i].astype(int), offset)
+        offset = np.max(gt_labels[i]) + 1
+
+    return gt_labels, pred_labels
 
 
 def read_file(infn, key):
@@ -111,30 +179,6 @@ def read_file(infn, key):
     else:
         raise NotImplementedError("invalid file format %s", infn)
     return volume
-
-
-def check_sizes(gt_labels, pred_labels, overlapping_inst, keep_gt_shape):
-    # check: what if there are only one gt instance in overlapping_inst scenario?
-    if gt_labels.shape[0] == 1 and not keep_gt_shape:
-        gt_labels.shape = gt_labels.shape[1:]
-    gt_labels = np.squeeze(gt_labels)
-    if gt_labels.ndim > pred_labels.ndim and not keep_gt_shape:
-        gt_labels = np.max(gt_labels, axis=0)
-    logger.debug("gt shape %s", gt_labels.shape)
-
-    # heads up: should not crop channel dimensions, assuming channels first
-    if not keep_gt_shape:
-        pred_labels, gt_labels = maybe_crop(
-            pred_labels, gt_labels, overlapping_inst)
-    else:
-        if pred_labels.ndim < gt_labels.ndim:
-            pred_labels = np.expand_dims(pred_labels, axis=0)
-            pred_labels, gt_labels = maybe_crop(pred_labels, gt_labels, True)
-            pred_labels = np.squeeze(pred_labels)
-    logger.debug(
-        "prediction %s, shape %s", np.unique(pred_labels), pred_labels.shape)
-    logger.debug("gt %s, shape %s", np.unique(gt_labels), gt_labels.shape)
-    return gt_labels, pred_labels
 
 
 def get_output_name(
@@ -178,20 +222,21 @@ def filter_components(volume, thresh):
     return volume
 
 def get_centerline_overlap_single(
-        skeletonize, compare, skeletonize_label, compare_label):
+        to_skeletonize, compare_with, skeletonize_label, compare_label):
     """skeletonizes `to_skeletonize` and checks how much overlap
     `compare_with` has with the skeletons, for a single pair of labels)
     """
-    mask = skeletonize == skeletonize_label
-    if mask.ndim == 4:
-        mask = np.max(mask, axis=0)
-    skeleton = skeletonize_3d(mask) > 0
-    skeleton_size = np.sum(skeleton)
-    mask = compare == compare_label
-    if mask.ndim == 4:
-        mask == np.max(mask, axis=0)
+    to_skeletonize = to_skeletonize == skeletonize_label
+    if to_skeletonize.ndim == 4:
+        to_skeletonize = np.max(to_skeletonize, axis=0)
+    # note: skeletonize_3d also works for 2d images
+    skeleton = skeletonize_3d(to_skeletonize) > 0
+    compare_with = compare_with == compare_label
+    if compare_with.ndim == 4:
+        compare_with == np.max(compare_with, axis=0)
 
-    return np.sum(mask[skeleton]) / float(skeleton_size)
+    return (np.sum(compare_with[skeleton], dtype=float)
+            / np.sum(skeleton, dtype=float))
 
 
 def get_centerline_overlap(to_skeletonize, compare_with, match):
@@ -199,43 +244,37 @@ def get_centerline_overlap(to_skeletonize, compare_with, match):
     `compare_with` has with the skeletons, for all pairs of labels
     (incl. the background label in `compare_with`)
     """
-    # heads up: only implemented for 3d data
-    skeleton_one_inst_per_channel = True if to_skeletonize.ndim == 4 else False
-    compare_one_inst_per_channel = True if compare_with.ndim == 4 else False
+    # assumes channel_dim
+    fg = np.max(compare_with > 0, axis=0).astype(np.uint8)
 
-    if compare_one_inst_per_channel:
-        fg = np.max(compare_with > 0, axis=0).astype(np.uint8)
-
-    labels = np.unique(to_skeletonize[to_skeletonize > 0])
-
-    for label in labels:
-        logger.debug("compute centerline overlap for %i", label)
-        if skeleton_one_inst_per_channel:
-            #idx = np.unravel_index(np.argmax(mask), mask.shape)[0]
-            mask = to_skeletonize[label - 1] #heads up: assuming increasing labels
-        else:
-            mask = to_skeletonize == label
+    # assumes uniquely labeled instances (i.e., no binary masks per channel)
+    skeleton_ids = np.unique(to_skeletonize[to_skeletonize > 0])
+    for skeleton_id in skeleton_ids:
+        logger.debug("compute centerline overlap for %i", skeleton_id)
+        # binarize
+        mask = to_skeletonize == skeleton_id
+        # remove channel dim via max projection
+        mask = np.max(mask, axis=0)
+        # skeletonize
         skeleton = skeletonize_3d(mask.astype(np.uint8)) > 0
         skeleton_size = np.sum(skeleton)
 
-        # if one instance per channel for compare, we need to correct bg label
-        if compare_one_inst_per_channel:
+        compare_labels, compare_labels_cnt = np.unique(
+            compare_with[:, skeleton], return_counts=True)
+
+        # remember to correct for bg label
+        if 0 in compare_labels:
             compare_fg, compare_fg_cnt = np.unique(
                 fg[skeleton], return_counts=True)
-            if np.any(compare_fg > 0):
-                compare_label, compare_label_cnt = np.unique(
-                    compare_with[:, skeleton], return_counts=True)
-                if np.any(compare_label == 0):
-                    compare_label[0] = compare_fg[0]
-                    compare_label_cnt[0] = compare_fg_cnt[0]
+            if 0 in compare_fg:
+                assert compare_labels[0] == 0 and compare_fg[0] == 0
+                compare_labels_cnt[0] = compare_fg_cnt[0]
             else:
-                compare_label = compare_fg
-                compare_label_cnt = compare_fg_cnt
-        else:
-            compare_label, compare_label_cnt = np.unique(
-                compare_with[skeleton], return_counts=True)
-        ratio = compare_label_cnt / float(skeleton_size)
-        match[label, compare_label] = ratio
+                compare_labels = compare_labels[1:]
+                compare_labels_cnt = compare_labels_cnt[1:]
+
+        ratio = compare_labels_cnt / float(skeleton_size)
+        match[skeleton_id, compare_labels] = ratio
 
     return match
 
@@ -244,7 +283,7 @@ def get_centerline_overlap(to_skeletonize, compare_with, match):
 # todo: not use num_*_labels as parameters here?
 def compute_localization_criterion(
         pred_labels_rel, gt_labels_rel, num_pred_labels, num_gt_labels,
-        localization_criterion, overlapping_inst):
+        localization_criterion):
     """computes the localization part of the metric
     For each pair of labels in the prediction and gt,
     how much are they co-localized, based on the chosen criterion?
@@ -260,27 +299,17 @@ def compute_localization_criterion(
     # intersection over union
     if localization_criterion == "iou":
         logger.debug("compute iou")
-        # todo: implement iou for keep_gt_shape
-        if overlapping_inst:
-            pred_tile = [1, ] * pred_labels_rel.ndim
-            pred_tile[0] = gt_labels_rel.shape[0]
-            gt_tile = [1, ] * gt_labels_rel.ndim
-            gt_tile[1] = pred_labels_rel.shape[0]
-            pred_tiled = np.tile(pred_labels_rel, pred_tile).flatten()
-            gt_tiled = np.tile(gt_labels_rel, gt_tile).flatten()
-            mask = np.logical_or(pred_tiled > 0, gt_tiled > 0)
-            overlay = np.array([pred_tiled[mask], gt_tiled[mask]])
-            overlay_labels, overlay_labels_counts = np.unique(
-                overlay, return_counts=True, axis=1)
-            overlay_labels = np.transpose(overlay_labels)
-        else:
-            overlay = np.array(
-                [pred_labels_rel.flatten(), gt_labels_rel.flatten()])
-            logger.debug("overlay shape relabeled %s", overlay.shape)
-            # get overlaying cells and the size of the overlap
-            overlay_labels, overlay_labels_counts = np.unique(
-                overlay, return_counts=True, axis=1)
-            overlay_labels = np.transpose(overlay_labels)
+        pred_tile = [1, ] * pred_labels_rel.ndim
+        pred_tile[0] = gt_labels_rel.shape[0]
+        gt_tile = [1, ] * gt_labels_rel.ndim
+        gt_tile[1] = pred_labels_rel.shape[0]
+        pred_tiled = np.tile(pred_labels_rel, pred_tile).flatten()
+        gt_tiled = np.tile(gt_labels_rel, gt_tile).flatten()
+        mask = np.logical_or(pred_tiled > 0, gt_tiled > 0)
+        overlay = np.array([pred_tiled[mask], gt_tiled[mask]])
+        overlay_labels, overlay_labels_counts = np.unique(
+            overlay, return_counts=True, axis=1)
+        overlay_labels = np.transpose(overlay_labels)
 
         # get gt cell ids and the size of the corresponding cell
         gt_labels_list, gt_counts = np.unique(gt_labels_rel, return_counts=True)
@@ -317,21 +346,16 @@ def compute_localization_criterion(
             recallMat)
 
         # get recallMat without overlapping gt labels for false merge calculation later on
-        if overlapping_inst or \
-           len(gt_labels_rel.shape) > len(pred_labels_rel.shape):
-            gt_wo_overlap = gt_labels_rel.copy()
-            mask = np.sum(gt_labels_rel > 0, axis=0) > 1
-            gt_wo_overlap[:, mask] = 0
-            pred_wo_overlap = pred_labels_rel.copy()
-            if overlapping_inst:
-                # todo: check how this should be done with overlapping inst in prediction
-                pred_wo_overlap[:, mask] = 0
-            else:
-                pred_wo_overlap[mask] = 0
+        gt_wo_overlap = gt_labels_rel.copy()
+        mask = np.sum(gt_labels_rel > 0, axis=0) > 1
+        gt_wo_overlap[:, mask] = 0
+        pred_wo_overlap = pred_labels_rel.copy()
+        # todo: check how this should be done with overlapping inst in prediction
+        pred_wo_overlap[:, mask] = 0
 
-            recallMat_wo_overlap = get_centerline_overlap(
-                gt_wo_overlap, pred_wo_overlap,
-                np.zeros_like(recallMat))
+        recallMat_wo_overlap = get_centerline_overlap(
+            gt_wo_overlap, pred_wo_overlap,
+            np.zeros_like(recallMat))
         err = np.geterr()
         np.seterr(invalid='ignore')
         locMat = np.nan_to_num(2 * precMat * recallMat / (precMat + recallMat))
@@ -410,7 +434,7 @@ def assign_labels(locMat, assignment_strategy, thresh, num_matches):
 
 def get_false_labels(
         tp_pred_ind, tp_gt_ind, num_pred_labels, num_gt_labels, locMat,
-        precMat, recallMat, thresh, overlapping_inst, unique_false_labels,
+        precMat, recallMat, thresh, unique_false_labels,
         recallMat_wo_overlap):
 
     # get false positive indices
@@ -443,12 +467,8 @@ def get_false_labels(
     # get false merger indices
     # check if pred label covers more than one gt label with clDice > thresh
     # check if merger also exists when ignoring gt overlapping regions
-    if overlapping_inst:
-        loc_mask = np.logical_and(
-            recallMat[1:, 1:] > thresh, recallMat_wo_overlap[1:, 1:] > thresh)
-    else:
-        # todo: correct? not recallMat?
-        loc_mask = locMat[1:, 1:] > thresh
+    loc_mask = np.logical_and(
+        recallMat[1:, 1:] > thresh, recallMat_wo_overlap[1:, 1:] > thresh)
     fm_pred_count = np.maximum(0, np.sum(loc_mask, axis=0) - 1)
     fm_count = np.sum(fm_pred_count)
     # we need fm_pred_ind and fm_gt_ind for visualization later on

@@ -4,15 +4,13 @@ import sys
 
 import argparse
 import numpy as np
-
-from skimage.segmentation import relabel_sequential
 import toml
 
 from .util import (
     assign_labels,
-    check_sizes,
+    check_and_fix_sizes,
+    check_fix_and_unify_ids,
     compute_localization_criterion,
-    filter_components,
     get_centerline_overlap_single,
     get_false_labels,
     get_output_name,
@@ -86,9 +84,10 @@ class Metrics:
 def evaluate_file(
         res_file,
         gt_file,
+        ndim,
+        out_dir,
         res_key=None,
         gt_key=None,
-        out_dir=None,
         suffix="",
         localization_criterion="iou", # "iou", "cldice"
         assignment_strategy="hungarian", # "hungarian", "greedy", "gt_0_5"
@@ -113,6 +112,11 @@ def evaluate_file(
         path to computed segmentation results
     gt_file: str/Path
         path to ground truth segmentation
+    ndim: int
+        number of spatial dimensions of data (typically 2 or 3)
+    out_dir: str/Path
+        directory, where to store results
+        (basename will be constructed based on sample name and args)
     res_key: str
         key of array in res_file (optional, not used for tif)
     gt_key: str
@@ -162,56 +166,32 @@ def evaluate_file(
         "prediction min %f, max %f, shape %s", np.min(pred_labels),
         np.max(pred_labels), pred_labels.shape)
     pred_labels = np.squeeze(pred_labels)
-    logger.debug("prediction shape %s", pred_labels.shape)
+    assert pred_labels.ndim == ndim or pred_labels.ndim == ndim+1
 
     # read ground truth data
     gt_labels = read_file(gt_file, gt_key)
     logger.debug(
         "gt min %f, max %f, shape %s", np.min(gt_labels),
         np.max(gt_labels), gt_labels.shape)
-
-    # check sizes and crop if necessary
-    gt_labels, pred_labels = check_sizes(
-        gt_labels, pred_labels, overlapping_inst,
-        kwargs.get("keep_gt_shape", False))
-
-    # remove small components
-    if remove_small_components is not None and remove_small_components > 0:
-        logger.info(
-            "call remove small components with filter size %i",
-            remove_small_components)
-        logger.debug(
-            "prediction %s, shape %s", np.unique(pred_labels),
-            pred_labels.shape)
-        pred_labels = filter_components(pred_labels, remove_small_components)
-        logger.debug(
-            "prediction %s, shape %s", np.unique(pred_labels),
-            pred_labels.shape)
-
-    # if foreground_only is selected, remove all predictions within gt background
-    if foreground_only:
-        try:
-            pred_labels[gt_labels==0] = 0
-        except IndexError:
-            pred_labels[:, np.any(gt_labels, axis=0).astype(int)==0] = 0
-    logger.info("processing %s %s", res_file, gt_file)
-
-    # relabel gt labels in case of binary mask per channel
-    if overlapping_inst and np.max(gt_labels) == 1:
-        for i in range(gt_labels.shape[0]):
-            gt_labels[i] = gt_labels[i] * (i + 1)
+    gt_labels = np.squeeze(gt_labels)
+    assert gt_labels.ndim == ndim or gt_labels.ndim == ndim+1
 
     metrics = evaluate_volume(
-        gt_labels, pred_labels, outFn,
-        localization_criterion,
-        assignment_strategy,
-        evaluate_false_labels,
-        unique_false_labels,
-        add_general_metrics,
-        visualize,
-        visualize_type,
-        overlapping_inst,
-        partly
+        gt_labels,
+        pred_labels,
+        ndim,
+        outFn,
+        localization_criterion=localization_criterion,
+        assignment_strategy=assignment_strategy,
+        evaluate_false_labels=evaluate_false_labels,
+        unique_false_labels=unique_false_labels,
+        add_general_metrics=add_general_metrics,
+        visualize=visualize,
+        visualize_type=visualize_type,
+        overlapping_inst=overlapping_inst,
+        remove_small_components=remove_small_components,
+        foreground_only=foreground_only,
+        partly=partly
     )
     metrics.save()
 
@@ -221,6 +201,7 @@ def evaluate_file(
 def evaluate_volume(
         gt_labels,
         pred_labels,
+        ndim,
         outFn,
         localization_criterion="iou",
         assignment_strategy="hungarian",
@@ -230,6 +211,8 @@ def evaluate_volume(
         visualize=False,
         visualize_type="nuclei",
         overlapping_inst=False,
+        remove_small_components=None,
+        foreground_only=False,
         partly=False
 ):
     """computes segmentation quality of file wrt. its ground truth
@@ -250,13 +233,14 @@ def evaluate_volume(
     if partly:
         evaluate_false_labels = True
 
-    # relabel labels sequentially
-    pred_labels_rel, _, _ = relabel_sequential(pred_labels.astype(int))
-    gt_labels_rel, _, _ = relabel_sequential(gt_labels)
+    # check sizes and crop if necessary
+    gt_labels, pred_labels = check_and_fix_sizes(gt_labels, pred_labels, ndim)
+    gt_labels_rel, pred_labels_rel = check_fix_and_unify_ids(
+        gt_labels, pred_labels, remove_small_components, foreground_only)
 
     logger.debug(
-        f"are there pixels with multiple instances?: "
-        "{np.sum(np.sum(gt_labels_rel > 0, axis=0) > 1}")
+        "are there pixels with multiple instances?: "
+        f"{np.sum(np.sum(gt_labels_rel > 0, axis=0) > 1)}")
 
     # get number of labels
     num_pred_labels = int(np.max(pred_labels_rel))
@@ -268,7 +252,7 @@ def evaluate_volume(
         compute_localization_criterion(
             pred_labels_rel, gt_labels_rel,
             num_pred_labels, num_gt_labels,
-            localization_criterion, overlapping_inst)
+            localization_criterion)
 
     metrics = Metrics(outFn)
     tblNameGen = "general"
@@ -296,15 +280,11 @@ def evaluate_volume(
 
         # get labels for each segmentation error
         if evaluate_false_labels == True or visualize == True:
-            check_wo_overlap = overlapping_inst or \
-                len(gt_labels_rel.shape) > len(pred_labels_rel.shape)
             fp_ind, fn_ind, fs_ind, fm_pred_ind, fm_gt_ind, \
                 fm_count, fp_ind_only_bg = get_false_labels(
                     pred_ind, gt_ind, num_pred_labels, num_gt_labels,
-                    locMat, precMat, recallMat, th,
-                    check_wo_overlap, unique_false_labels,
-                    recallMat_wo_overlap
-                )
+                    locMat, precMat, recallMat, th, unique_false_labels,
+                    recallMat_wo_overlap)
 
         # get false positive and false negative counters
         if unique_false_labels:
@@ -380,31 +360,21 @@ def evaluate_volume(
             # pred labels twice for overlapping gt instances
             max_gt_ind = np.argmax(precMat, axis=0)
             gt_cov = []
-            # if gt and pred have overlapping instances
-            if overlapping_inst:
-                # recalculate clRecall for each gt and union of assigned
-                # predictions, as predicted instances can potentially overlap
-                max_gt_ind_unique = np.unique(max_gt_ind[max_gt_ind > 0])
-                for gt_i in np.arange(1, num_gt_labels + 1):
-                    if gt_i in max_gt_ind_unique:
-                        pred_union = np.zeros(
-                            pred_labels_rel.shape[1:],
-                            dtype=pred_labels_rel.dtype)
-                        for pred_i in np.arange(num_pred_labels + 1)[max_gt_ind == gt_i]:
-                            mask = pred_labels_rel[pred_i - 1] > 0
-                            pred_union[mask] = 1
-                        gt_cov.append(get_centerline_overlap_single(
-                            gt_labels_rel, pred_union, gt_i, 1))
-                    else:
-                        gt_cov.append(0.0)
-            else:
-                # if gt has overlapping instances, but not prediction
-                if len(gt_labels_rel.shape) > len(pred_labels_rel.shape):
-                    for i in range(1, recallMat.shape[0]):
-                        gt_cov.append(np.sum(recallMat[i, max_gt_ind==i]))
-                # if none has overlapping instances
+            # recalculate clRecall for each gt and union of assigned
+            # predictions, as predicted instances can potentially overlap
+            max_gt_ind_unique = np.unique(max_gt_ind[max_gt_ind > 0])
+            for gt_i in np.arange(1, num_gt_labels + 1):
+                if gt_i in max_gt_ind_unique:
+                    pred_union = np.zeros(
+                        pred_labels_rel.shape[1:],
+                        dtype=pred_labels_rel.dtype)
+                    for pred_i in np.arange(num_pred_labels + 1)[max_gt_ind == gt_i]:
+                        mask = np.max(pred_labels_rel == pred_i, axis=0)
+                        pred_union[mask] = 1
+                    gt_cov.append(get_centerline_overlap_single(
+                        gt_labels_rel, pred_union, gt_i, 1))
                 else:
-                    gt_cov = np.sum(recallMat[1:, 1:], axis=1)
+                    gt_cov.append(0.0)
             gt_skel_coverage = np.mean(gt_cov)
 
         if "avg_gt_skel_coverage" in add_general_metrics:
