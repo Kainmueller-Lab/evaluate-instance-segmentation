@@ -360,21 +360,28 @@ def evaluate_volume(
             # pred labels twice for overlapping gt instances
             max_gt_ind = np.argmax(precMat, axis=0)
             gt_cov = []
-            # recalculate clRecall for each gt and union of assigned
-            # predictions, as predicted instances can potentially overlap
-            max_gt_ind_unique = np.unique(max_gt_ind[max_gt_ind > 0])
-            for gt_i in np.arange(1, num_gt_labels + 1):
-                if gt_i in max_gt_ind_unique:
-                    pred_union = np.zeros(
-                        pred_labels_rel.shape[1:],
-                        dtype=pred_labels_rel.dtype)
-                    for pred_i in np.arange(num_pred_labels + 1)[max_gt_ind == gt_i]:
-                        mask = np.max(pred_labels_rel == pred_i, axis=0)
-                        pred_union[mask] = 1
-                    gt_cov.append(get_centerline_overlap_single(
-                        gt_labels_rel, pred_union, gt_i, 1))
-                else:
-                    gt_cov.append(0.0)
+            # if both gt and pred have overlapping instances
+            if (np.any(np.sum(gt_labels, axis=0) != np.max(gt_labels, axis=0)) and
+                np.any(np.sum(pred_labels, axis=0) != np.max(pred_labels, axis=0))):
+                # recalculate clRecall for each gt and union of assigned
+                # predictions, as predicted instances can potentially overlap
+                max_gt_ind_unique = np.unique(max_gt_ind[max_gt_ind > 0])
+                for gt_i in np.arange(1, num_gt_labels + 1):
+                    if gt_i in max_gt_ind_unique:
+                        pred_union = np.zeros(
+                            pred_labels_rel.shape[1:],
+                            dtype=pred_labels_rel.dtype)
+                        for pred_i in np.arange(num_pred_labels + 1)[max_gt_ind == gt_i]:
+                            mask = np.max(pred_labels_rel == pred_i, axis=0)
+                            pred_union[mask] = 1
+                        gt_cov.append(get_centerline_overlap_single(
+                            gt_labels_rel, pred_union, gt_i, 1))
+                    else:
+                        gt_cov.append(0.0)
+            else:
+                # otherwise use previously computed values
+                for i in range(1, recallMat.shape[0]):
+                    gt_cov.append(np.sum(recallMat[i, max_gt_ind==i]))
             gt_skel_coverage = np.mean(gt_cov)
 
         if "avg_gt_skel_coverage" in add_general_metrics:
