@@ -282,7 +282,7 @@ def get_centerline_overlap(to_skeletonize, compare_with, match):
 # todo: define own functions per localization criterion
 # todo: not use num_*_labels as parameters here?
 def compute_localization_criterion(
-        pred_labels_rel, gt_labels_rel, num_pred_labels, num_gt_labels,
+        pred_labels, gt_labels, num_pred_labels, num_gt_labels,
         localization_criterion):
     """computes the localization part of the metric
     For each pair of labels in the prediction and gt,
@@ -299,12 +299,12 @@ def compute_localization_criterion(
     # intersection over union
     if localization_criterion == "iou":
         logger.debug("compute iou")
-        pred_tile = [1, ] * pred_labels_rel.ndim
-        pred_tile[0] = gt_labels_rel.shape[0]
-        gt_tile = [1, ] * gt_labels_rel.ndim
-        gt_tile[1] = pred_labels_rel.shape[0]
-        pred_tiled = np.tile(pred_labels_rel, pred_tile).flatten()
-        gt_tiled = np.tile(gt_labels_rel, gt_tile).flatten()
+        pred_tile = [1, ] * pred_labels.ndim
+        pred_tile[0] = gt_labels.shape[0]
+        gt_tile = [1, ] * gt_labels.ndim
+        gt_tile[1] = pred_labels.shape[0]
+        pred_tiled = np.tile(pred_labels, pred_tile).flatten()
+        gt_tiled = np.tile(gt_labels, gt_tile).flatten()
         mask = np.logical_or(pred_tiled > 0, gt_tiled > 0)
         overlay = np.array([pred_tiled[mask], gt_tiled[mask]])
         overlay_labels, overlay_labels_counts = np.unique(
@@ -312,7 +312,7 @@ def compute_localization_criterion(
         overlay_labels = np.transpose(overlay_labels)
 
         # get gt cell ids and the size of the corresponding cell
-        gt_labels_list, gt_counts = np.unique(gt_labels_rel, return_counts=True)
+        gt_labels_list, gt_counts = np.unique(gt_labels, return_counts=True)
         gt_labels_count_dict = {}
         logger.debug("%s %s", gt_labels_list, gt_counts)
         for (l,c) in zip(gt_labels_list, gt_counts):
@@ -320,7 +320,7 @@ def compute_localization_criterion(
 
         # get pred cell ids
         pred_labels_list, pred_counts = np.unique(
-            pred_labels_rel, return_counts=True)
+            pred_labels, return_counts=True)
         logger.debug("%s %s", pred_labels_list, pred_counts)
         pred_labels_count_dict = {}
         for (l,c) in zip(pred_labels_list, pred_counts):
@@ -338,24 +338,27 @@ def compute_localization_criterion(
         logger.debug("compute cldice")
         # todo: transpose precMat
         precMat = get_centerline_overlap(
-            pred_labels_rel, gt_labels_rel,
+            pred_labels, gt_labels,
             np.transpose(precMat))
         precMat = np.transpose(precMat)
         recallMat = get_centerline_overlap(
-            gt_labels_rel, pred_labels_rel,
+            gt_labels, pred_labels,
             recallMat)
 
-        # get recallMat without overlapping gt labels for false merge calculation later on
-        gt_wo_overlap = gt_labels_rel.copy()
-        mask = np.sum(gt_labels_rel > 0, axis=0) > 1
-        gt_wo_overlap[:, mask] = 0
-        pred_wo_overlap = pred_labels_rel.copy()
-        # todo: check how this should be done with overlapping inst in prediction
-        pred_wo_overlap[:, mask] = 0
+        if (np.any(np.sum(gt_labels, axis=0) != np.max(gt_labels, axis=0)) or
+            np.any(np.sum(pred_labels, axis=0) != np.max(pred_labels, axis=0))):
+            # get recallMat without overlapping gt labels for false merge
+            # calculation later on
+            gt_wo_overlap = gt_labels.copy()
+            mask = np.sum(gt_labels > 0, axis=0) > 1
+            gt_wo_overlap[:, mask] = 0
+            pred_wo_overlap = pred_labels.copy()
+            # todo: check how this should be done with overlapping inst in prediction
+            pred_wo_overlap[:, mask] = 0
 
-        recallMat_wo_overlap = get_centerline_overlap(
-            gt_wo_overlap, pred_wo_overlap,
-            np.zeros_like(recallMat))
+            recallMat_wo_overlap = get_centerline_overlap(
+                gt_wo_overlap, pred_wo_overlap,
+                np.zeros_like(recallMat))
         err = np.geterr()
         np.seterr(invalid='ignore')
         locMat = np.nan_to_num(2 * precMat * recallMat / (precMat + recallMat))
@@ -467,8 +470,11 @@ def get_false_labels(
     # get false merger indices
     # check if pred label covers more than one gt label with clDice > thresh
     # check if merger also exists when ignoring gt overlapping regions
-    loc_mask = np.logical_and(
-        recallMat[1:, 1:] > thresh, recallMat_wo_overlap[1:, 1:] > thresh)
+    if recallMat_wo_overlap is not None:
+        loc_mask = np.logical_and(
+            recallMat[1:, 1:] > thresh, recallMat_wo_overlap[1:, 1:] > thresh)
+    else:
+        loc_mask = recallMat[1:, 1:] > thresh
     fm_pred_count = np.maximum(0, np.sum(loc_mask, axis=0) - 1)
     fm_count = np.sum(fm_pred_count)
     # we need fm_pred_ind and fm_gt_ind for visualization later on
