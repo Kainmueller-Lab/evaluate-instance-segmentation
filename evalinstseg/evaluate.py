@@ -146,15 +146,15 @@ def evaluate_file(
     if not from_scratch and \
        len(glob.glob(outFn + ".toml")) > 0:
         with open(outFn+".toml", 'r') as tomlFl:
-            metrics = toml.load(tomlFl)
+            metricsDict = toml.load(tomlFl)
         if check_for_metric is None:
-            return metrics
+            return metricsDict
         try:
-            metric = metrics
+            metric = metricsDict
             for k in check_for_metric.split('.'):
                 metric = metric[k]
             logger.info('Skipping evaluation, already exists! %s', outFn)
-            return metrics
+            return metricsDict
         except KeyError:
             logger.info(
                 "Error (key %s missing) in existing evaluation "
@@ -194,6 +194,8 @@ def evaluate_file(
         partly=partly
     )
     metrics.save()
+
+    return metrics.metricsDict
 
 
 # todo: should pixelwise neuron evaluation also be possible?
@@ -404,7 +406,7 @@ def evaluate_volume(
             avg_f1_cov_score = 0.5 * avFscore19 + 0.5 * gt_skel_coverage
             metrics.addMetric(tblNameGen, "avg_f1_cov_score", avg_f1_cov_score)
 
-    return metrics.metricsDict
+    return metrics
 
 
 def main():
