@@ -398,7 +398,8 @@ def evaluate_volume(
                 tp_skel_coverage = np.mean(tp_cov)
             else:
                 tp_skel_coverage = 0
-            metrics.addMetric(tblNameGen, "tp_skel_coverage", tp_cov)
+            metrics.addMetric(
+                "confusion_matrix.th_0_5", "tp_skel_coverage", tp_cov)
             metrics.addMetric(
                 tblNameGen, "avg_tp_skel_coverage", tp_skel_coverage)
 
