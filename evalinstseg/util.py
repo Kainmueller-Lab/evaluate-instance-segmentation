@@ -404,7 +404,7 @@ def assign_labels(locMat, assignment_strategy, thresh, num_matches):
 
     # greedy matching by localization criterion
     elif assignment_strategy == "greedy":
-        logger.info("start computing greedy assignment for thresh %s, thresh")
+        logger.info("start computing greedy assignment for thresh %s", thresh)
         gt_ind, pred_ind = np.nonzero(locFgMat > thresh) # > 0) if it should be
         # used before iterating through thresholds
         locs = locFgMat[gt_ind, pred_ind]
