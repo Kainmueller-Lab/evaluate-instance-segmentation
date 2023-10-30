@@ -1,10 +1,12 @@
 import glob
 import logging
 import sys
+import os
 
 import argparse
 import numpy as np
 import toml
+from natsort import natsorted
 
 from .util import (
     assign_labels,
@@ -20,6 +22,7 @@ from .visualize import (
     visualize_neurons,
     visualize_nuclei
 )
+from .summarize import summarize_metric_dict
 
 logger = logging.getLogger(__name__)
 
@@ -90,7 +93,7 @@ def evaluate_file(
         gt_key=None,
         suffix="",
         localization_criterion="iou", # "iou", "cldice"
-        assignment_strategy="hungarian", # "hungarian", "greedy", "gt_0_5"
+        assignment_strategy="greedy", # "hungarian", "greedy", "gt_0_5"
         add_general_metrics=[],
         visualize=False,
         visualize_type="nuclei", # "nuclei" or "neuron"
@@ -199,7 +202,6 @@ def evaluate_file(
 
 
 # todo: should pixelwise neuron evaluation also be possible?
-# keep_gt_shape not in pixelwise overlap so far
 def evaluate_volume(
         gt_labels,
         pred_labels,
@@ -410,6 +412,99 @@ def evaluate_volume(
     return metrics
 
 
+def average_flylight_score_over_instances(samples_foldn, result):
+    # heads up: hard coded for 0.5 average F1 + 0.5 average gt coverage
+    threshs = [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9]
+    fscores = []
+    gt_covs = []
+    tp = {}
+    fp = {}
+    fn = {}
+    false_split = []
+    false_merge = []
+    tp_covs = []
+    num_gt = []
+    num_pred = []
+
+    for thresh in threshs:
+        tp[thresh] = []
+        fp[thresh] = []
+        fn[thresh] = []
+    for s in samples_foldn:
+        # todo: move type conversion to evaluate_file
+        gt_covs += list(np.array(
+            result[s]["general"]["gt_skel_coverage"], dtype=np.float32))
+        num_gt.append(result[s]["general"]["Num GT"])
+        num_pred.append(result[s]["general"]["Num Pred"])
+        for thresh in threshs:
+            tp[thresh].append(result[s][
+                                  "confusion_matrix"][
+                                  "th_" + str(thresh).replace(".", "_")][
+                                  "AP_TP"])
+            fp[thresh].append(result[s][
+                                  "confusion_matrix"][
+                                  "th_" + str(thresh).replace(".", "_")][
+                                  "AP_FP"])
+            fn[thresh].append(result[s][
+                                  "confusion_matrix"][
+                                  "th_" + str(thresh).replace(".", "_")][
+                                  "AP_FN"])
+            if thresh == 0.5:
+                false_split.append(result[s][
+                                       "confusion_matrix"]["th_0_5"][
+                                       "false_split"])
+                false_merge.append(result[s][
+                                       "confusion_matrix"]["th_0_5"][
+                                       "false_merge"])
+                tp_covs += list(np.array(
+                    result[s]["confusion_matrix"]["th_0_5"][
+                        "tp_skel_coverage"], dtype=np.float32))
+    for thresh in threshs:
+        print(tp[thresh], fp[thresh], fn[thresh])
+        fscores.append(2 * np.sum(tp[thresh]) / (
+            2 * np.sum(tp[thresh]) + np.sum(fp[thresh]) + np.sum(fn[thresh])))
+    print(fscores)
+    avS = 0.5 * np.mean(fscores) + 0.5 * np.mean(gt_covs)
+
+    per_instance_counts = {}
+    per_instance_counts["general"] = {
+        "Num GT": np.sum(num_gt),
+        "Num Pred": np.sum(num_pred),
+        "avg_gt_skel_coverage": np.mean(gt_covs),
+        "avg_f1_cov_score": avS,
+        "avFscore": np.mean(fscores)
+    }
+    per_instance_counts["confusion_matrix"] = {"avFscore": np.mean(fscores)}
+    per_instance_counts["gt_covs"] = gt_covs
+    per_instance_counts["false_split"] = np.sum(false_split)
+    per_instance_counts["false_merge"] = np.sum(false_merge)
+    per_instance_counts["tp"] = []
+    per_instance_counts["fp"] = []
+    per_instance_counts["fn"] = []
+    for i, thresh in enumerate(threshs):
+        per_instance_counts["tp"].append(np.sum(tp[thresh]))
+        per_instance_counts["fp"].append(np.sum(fp[thresh]))
+        per_instance_counts["fn"].append(np.sum(fn[thresh]))
+        per_instance_counts["confusion_matrix"][
+            "th_" + str(thresh).replace(".", "_")] = {
+            "fscore": fscores[i]}
+        if thresh == 0.5:
+            per_instance_counts["confusion_matrix"]["th_0_5"]["AP_TP"] = np.sum(
+                tp[thresh])
+            per_instance_counts["confusion_matrix"]["th_0_5"]["AP_FP"] = np.sum(
+                fp[0.5])
+            per_instance_counts["confusion_matrix"]["th_0_5"]["AP_FN"] = np.sum(
+                fn[0.5])
+            per_instance_counts["confusion_matrix"]["th_0_5"][
+                "false_split"] = np.sum(false_split)
+            per_instance_counts["confusion_matrix"]["th_0_5"][
+                "false_merge"] = np.sum(false_merge)
+            per_instance_counts["confusion_matrix"]["th_0_5"][
+                "avg_tp_skel_coverage"] = np.mean(tp_covs)
+
+    return avS, per_instance_counts
+
+
 def main():
     """main entry point if called from command line
 
@@ -421,9 +516,9 @@ def main():
     """
     parser = argparse.ArgumentParser()
     # input output
-    parser.add_argument('--res_file', type=str,
+    parser.add_argument('--res_file', nargs="+", type=str,
             help='path to result file', required=True)
-    parser.add_argument('--gt_file', type=str,
+    parser.add_argument('--gt_file', nargs="+", type=str,
             help='path to ground truth file', required=True)
     parser.add_argument('--res_key', type=str,
             help='name result hdf/zarr key')
@@ -433,12 +528,15 @@ def main():
             help='output directory', required=True)
     parser.add_argument('--suffix', type=str,
             help='suffix (deprecated)', default='')
+    parser.add_argument('--ndim', type=int,
+            default=3,
+            help='number of spatial dimensions')
     # metrics definitions
     parser.add_argument('--localization_criterion', type=str,
             help='localization_criterion', default='iou',
             choices=['iou', 'cldice'])
     parser.add_argument('--assignment_strategy', type=str,
-            help='assignment strategy', default='hungarian',
+            help='assignment strategy', default='greedy',
             choices=['hungarian', 'greedy'])
     parser.add_argument('--add_general_metrics', type=str,
             nargs='+', help='add general metrics', default=[])
@@ -446,6 +544,8 @@ def main():
             default='confusion_matrix.th_0_5.AP',
             help='check if this metric already has been computed in '\
                     'possibly existing result files')
+    parser.add_argument('--summary', type=str, nargs='+',
+            default=None, help='list of metrics to include in the summary')
     # visualize
     parser.add_argument('--visualize', help='visualize segmentation errors',
             action='store_true', default=False)
@@ -458,13 +558,11 @@ def main():
             default=False,
             help='if there can be multiple instances per pixel '\
                     'in ground truth and prediction')
-    parser.add_argument('--keep_gt_shape', action='store_true',
-            default=False,
-            help='if there can be multiple instances per pixel '\
-                    'in ground truth but not prediction')
     parser.add_argument('--partly', action='store_true',
             default=False,
             help='if ground truth is only labeled partly')
+    parser.add_argument('--partly_list', nargs="+", type=bool, default=None,
+            help='use partly_list if you have a list of completely and partly inputs')
     parser.add_argument('--foreground_only', action='store_true',
             default=False,
             help='if background should be excluded')
@@ -475,10 +573,9 @@ def main():
             default=False,
             help='if false split and false merge should be computed '\
                     'besides false positives and false negatives')
-    parser.add_argument('--unique_false_labels', action='store_true',
-            default=False,
-            help='if false positives should not include false splits '\
-                    'and false negatives not false merges') # take out?
+    parser.add_argument('--app', type=str, default=None,
+            help='set parameters for specific applications',
+            choices=['flylight'])
     parser.add_argument('--from_scratch', action='store_true',
             default=False,
             help='recompute everything (instead of checking '\
@@ -489,29 +586,129 @@ def main():
     logger.debug("arguments %s",tuple(sys.argv))
     args = parser.parse_args()
 
-    evaluate_file(
-        args.res_file,
-        args.gt_file,
-        res_key=args.res_key,
-        gt_key=args.gt_key,
-        out_dir=args.out_dir,
-        suffix=args.suffix,
-        localization_criterion=args.localization_criterion,
-        assignment_strategy=args.assignment_strategy,
-        add_general_metrics=args.add_general_metrics,
-        visualize=args.visualize,
-        visualize_type=args.visualize_type,
-        overlapping_inst=args.overlapping_inst,
-        keep_gt_shape=args.keep_gt_shape,
-        partly=args.partly,
-        foreground_only=args.foreground_only,
-        remove_small_components=args.remove_small_components,
-        evaluate_false_labels=args.evaluate_false_labels,
-        unique_false_labels=args.unique_false_labels,
-        from_scratch=args.from_scratch,
-        debug=args.debug
-    )
+    # shortcut if res_file and gt_file contain folders
+    if len(args.res_file) == 1 and len(args.gt_file) == 1:
+        res_file = args.res_file[0]
+        gt_file = args.gt_file[0]
+        if (os.path.isdir(res_file) and not res_file.endswith(".zarr")) \
+                and (os.path.isdir(gt_file) and not gt_file.endswith(".zarr")):
+            args.res_file = natsorted(glob.glob(res_file + "/*.hdf"))
+
+            def get_gt_file(in_fn, gt_folder):
+                out_fn = os.path.join(gt_folder,
+                        os.path.basename(in_fn).split(".")[0] + ".zarr")
+                assert os.path.basename(in_fn).split(".")[0] == os.path.basename(
+                    out_fn).split(".")[0]
+                return out_fn
+
+            args.gt_file = [get_gt_file(fn, gt_file) for fn in args.res_file]
+
+    # check same length for result and gt files
+    assert len(args.res_file) == len(args.gt_file), \
+            "Please check, not the same number of result and gt files"
+    # set partly parameter for all samples if not done already
+    if len(args.res_file) > 1:
+        if args.partly_list is not None:
+            assert len(args.partly_list) == len(args.res_file), \
+                    "Please check, not the same number of result files "\
+                    "and partly_list values"
+            partly_list = args.partly_list
+        else:
+            partly_list = [args.partly] * len(args.res_file)
+    else:
+        partly_list = [args.partly]
+
+    if args.app is not None:
+        if args.app == "flylight":
+            print("Warning: parameter app is set and will overwrite parameters. "\
+                    "This might not be what you want.")
+            args.ndim = 3
+            args.localization_criterion = "cldice"
+            args.assignment_strategy = "greedy"
+            args.overlapping_inst = True
+            args.remove_small_components = 800
+            args.evaluate_false_labels = True
+            args.metric = "general.avg_f1_cov_score"
+            args.add_general_metrics = ["avg_gt_skel_coverage",
+                    "avg_tp_skel_coverage",
+                    "avg_f1_cov_score"
+                    ]
+            args.summary = ["general.Num GT",
+                    "general.Num Pred",
+                    "general.avg_f1_cov_score",
+                    "confusion_matrix.avFscore",
+                    "general.avg_gt_skel_coverage",
+                    "confusion_matrix.th_0_1.fscore",
+                    "confusion_matrix.th_0_2.fscore",
+                    "confusion_matrix.th_0_3.fscore",
+                    "confusion_matrix.th_0_4.fscore",
+                    "confusion_matrix.th_0_5.fscore",
+                    "confusion_matrix.th_0_6.fscore",
+                    "confusion_matrix.th_0_7.fscore",
+                    "confusion_matrix.th_0_8.fscore",
+                    "confusion_matrix.th_0_9.fscore",
+                    "confusion_matrix.th_0_5.AP_TP", "confusion_matrix.th_0_5.AP_FP",
+                    "confusion_matrix.th_0_5.AP_FN",
+                    "confusion_matrix.th_0_5.false_split",
+                    "confusion_matrix.th_0_5.false_merge",
+                    "confusion_matrix.th_0_5.avg_tp_skel_coverage"
+                    ]
+
+    samples = []
+    metric_dicts = []
+    for res_file, gt_file, partly in zip(args.res_file, args.gt_file, partly_list):
+        sample_name = os.path.basename(res_file).split(".")[0]
+        print("sample_name: ", sample_name)
+        print("res_file: ", res_file)
+        print("gt_file: ", gt_file)
+        print("partly: ", partly)
+        print("localization: ", args.localization_criterion)
+        print("assignment: ", args.assignment_strategy)
+        print("from scratch: ", args.from_scratch)
+        print("add general metrics: ", args.add_general_metrics)
+
+        samples.append(os.path.basename(res_file).split(".")[0])
+        metric_dict = evaluate_file(
+                res_file,
+                gt_file,
+                args.ndim,
+                args.out_dir,
+                res_key=args.res_key,
+                gt_key=args.gt_key,
+                suffix=args.suffix,
+                localization_criterion=args.localization_criterion,
+                assignment_strategy=args.assignment_strategy,
+                add_general_metrics=args.add_general_metrics,
+                visualize=args.visualize,
+                visualize_type=args.visualize_type,
+                partly=partly,
+                overlapping_inst=args.overlapping_inst,
+                foreground_only=args.foreground_only,
+                remove_small_components=args.remove_small_components,
+                evaluate_false_labels=args.evaluate_false_labels,
+                from_scratch=args.from_scratch,
+                debug=args.debug
+                )
+        metric_dicts.append(metric_dict)
+        print(metric_dict)
+
+    # aggregate over instances
+    metrics = {}
+    metrics_full = {}
+    acc_all_instances = None
+    for metric_dict, sample in zip(metric_dicts, samples):
+        if metric_dict is None:
+            continue
+        metrics_full[sample] = metric_dict
+
+    acc, acc_all_instances = average_flylight_score_over_instances(
+        samples, metrics_full)
+    summarize_metric_dict(metric_dicts, samples, args.summary,
+                          os.path.join(args.out_dir, "summary.csv"),
+                          agg_inst_dict=acc_all_instances
+                          )
 
 
 if __name__ == "__main__":
     main()
+

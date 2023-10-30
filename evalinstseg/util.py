@@ -244,6 +244,9 @@ def get_centerline_overlap(to_skeletonize, compare_with, match):
     `compare_with` has with the skeletons, for all pairs of labels
     (incl. the background label in `compare_with`)
     """
+    # make sure that arrays are of type int
+    to_skeletonize = to_skeletonize.astype(int)
+    compare_with = compare_with.astype(int)
     # assumes channel_dim
     fg = np.max(compare_with > 0, axis=0).astype(np.uint8)
 
