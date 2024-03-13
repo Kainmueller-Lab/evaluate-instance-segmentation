@@ -17,6 +17,7 @@ from .util import (
     get_false_labels,
     get_output_name,
     read_file,
+    greedy_many_to_many_matching,
 )
 from .visualize import (
     visualize_neurons,
@@ -105,6 +106,8 @@ def evaluate_file(
         unique_false_labels=False,
         check_for_metric=None,
         from_scratch=False,
+        fm_thresh=0.1,
+        fs_thresh=0.05,
         **kwargs
 ):
     """computes segmentation quality of file wrt. its ground truth
@@ -194,7 +197,9 @@ def evaluate_file(
         overlapping_inst=overlapping_inst,
         remove_small_components=remove_small_components,
         foreground_only=foreground_only,
-        partly=partly
+        partly=partly,
+        fm_thresh=fm_thresh,
+        fs_thresh=fs_thresh
     )
     metrics.save()
 
@@ -217,7 +222,9 @@ def evaluate_volume(
         overlapping_inst=False,
         remove_small_components=None,
         foreground_only=False,
-        partly=False
+        partly=False,
+        fm_thresh=0.1,
+        fs_thresh=0.05
 ):
     """computes segmentation quality of file wrt. its ground truth
 
@@ -409,6 +416,32 @@ def evaluate_volume(
             avg_f1_cov_score = 0.5 * avFscore19 + 0.5 * gt_skel_coverage
             metrics.addMetric(tblNameGen, "avg_f1_cov_score", avg_f1_cov_score)
 
+        if "false_merge" in add_general_metrics or \
+                "false_split" in add_general_metrics:
+            # call many-to-many matching based on clRecall
+            # get false merges
+            mmm = greedy_many_to_many_matching(gt_labels, pred_labels, recallMat, fm_thresh)
+            if mmm is None:
+                metrics.addMetric("general", "FM", 0)
+            else:
+                fms = np.zeros(num_pred_labels) # without 0 background
+                for k, v in mmm.items():
+                    for cv in v:
+                        fms[cv-1] += 1
+                fms = np.maximum(fms - 1, np.zeros(num_pred_labels))
+                metrics.addMetric("general", "FM", int(np.sum(fms)))
+            # get false splits
+            if fm_thresh != fs_thresh:
+                mmm = greedy_many_to_many_matching(gt_labels, pred_labels, recallMat, fs_thresh)
+            if mmm is None:
+                metrics.addMetric("general", "FS", 0)
+            else:
+                fs = 0
+                for k, v in mmm.items():
+                    fs += max(0, len(v) - 1)
+                print(fs)
+                metrics.addMetric("general", "FS", fs)
+
     return metrics
 
 
@@ -420,8 +453,10 @@ def average_flylight_score_over_instances(samples_foldn, result):
     tp = {}
     fp = {}
     fn = {}
-    false_split = []
-    false_merge = []
+    false_split = []    # to remove
+    false_merge = []    # to remove
+    fm = []
+    fs = []
     tp_covs = []
     num_gt = []
     num_pred = []
@@ -436,6 +471,8 @@ def average_flylight_score_over_instances(samples_foldn, result):
             result[s]["general"]["gt_skel_coverage"], dtype=np.float32))
         num_gt.append(result[s]["general"]["Num GT"])
         num_pred.append(result[s]["general"]["Num Pred"])
+        fm.append(result[s]["general"]["FM"])
+        fs.append(result[s]["general"]["FS"])
         for thresh in threshs:
             tp[thresh].append(result[s][
                                   "confusion_matrix"][
@@ -472,7 +509,9 @@ def average_flylight_score_over_instances(samples_foldn, result):
         "Num Pred": np.sum(num_pred),
         "avg_gt_skel_coverage": np.mean(gt_covs),
         "avg_f1_cov_score": avS,
-        "avFscore": np.mean(fscores)
+        "avFscore": np.mean(fscores),
+        "FM": np.sum(fm),
+        "FS": np.sum(fs)
     }
     per_instance_counts["confusion_matrix"] = {"avFscore": np.mean(fscores)}
     per_instance_counts["gt_covs"] = gt_covs
@@ -520,7 +559,9 @@ def average_sets(acc_a, dict_a, acc_b, dict_b):
             dict_a["general"]["avg_gt_skel_coverage"],
             dict_b["general"]["avg_gt_skel_coverage"]]),
         "avg_f1_cov_score": acc,
-        "avFscore": fscore
+        "avFscore": fscore,
+        "FM": dict_a["general"]["FM"] + dict_b["general"]["FM"],
+        "FS": dict_a["general"]["FS"] + dict_b["general"]["FS"],
     }
     per_instance_counts["confusion_matrix"] = {"avFscore": fscore}
     per_instance_counts["gt_covs"] = gt_covs
@@ -623,6 +664,10 @@ def main():
     parser.add_argument('--app', type=str, default=None,
             help='set parameters for specific applications',
             choices=['flylight'])
+    parser.add_argument('--fm_thresh', type=int, default=0.1,
+            help='min overlap with gt to count as false merger')
+    parser.add_argument('--fs_thresh', type=int, default=0.05,
+            help='min overlap with gt to count as false split')
     parser.add_argument('--from_scratch', action='store_true',
             default=False,
             help='recompute everything (instead of checking '\
@@ -693,7 +738,9 @@ def main():
             args.metric = "general.avg_f1_cov_score"
             args.add_general_metrics = ["avg_gt_skel_coverage",
                     "avg_tp_skel_coverage",
-                    "avg_f1_cov_score"
+                    "avg_f1_cov_score",
+                    "false_merge",
+                    "false_split"
                     ]
             args.summary = ["general.Num GT",
                     "general.Num Pred",
@@ -713,9 +760,13 @@ def main():
                     "confusion_matrix.th_0_5.AP_FN",
                     "confusion_matrix.th_0_5.false_split",
                     "confusion_matrix.th_0_5.false_merge",
-                    "confusion_matrix.th_0_5.avg_tp_skel_coverage"
+                    "confusion_matrix.th_0_5.avg_tp_skel_coverage",
+                    "general.FM",
+                    "general.FS"
                     ]
             args.visualize_type = "neuron"
+            args.fm_thresh = 0.1
+            args.fs_thresh = 0.05
 
     samples = []
     metric_dicts = []
@@ -749,6 +800,8 @@ def main():
                 foreground_only=args.foreground_only,
                 remove_small_components=args.remove_small_components,
                 evaluate_false_labels=args.evaluate_false_labels,
+                fm_thresh=args.fm_thresh,
+                fs_thresh=args.fs_thresh,
                 from_scratch=args.from_scratch,
                 debug=args.debug
                 )

@@ -8,6 +8,7 @@ from skimage.morphology import skeletonize_3d
 from skimage.segmentation import relabel_sequential
 import tifffile
 import zarr
+from queue import PriorityQueue
 
 logger = logging.getLogger(__name__)
 
@@ -436,6 +437,75 @@ def assign_labels(locMat, assignment_strategy, thresh, num_matches):
     tp_gt_ind = np.array(tp_gt_ind) + 1
 
     return tp, tp_pred_ind, tp_gt_ind
+
+
+def greedy_many_to_many_matching(gt_labels, pred_labels, locMat, thresh,
+        only_one_gt=False, only_one_pred=False):
+
+    matches = {}   # list of assigned pred instances for each gt
+    locFgMat = locMat[1:, 1:]
+
+    q = PriorityQueue()
+    gt_skel = {}
+    gt_avail = {}
+    pred_avail = {}
+    if not np.any(locFgMat > thresh):
+        return None
+
+    gt_ids, pred_ids = np.nonzero(locFgMat > thresh)
+    for gt_id, pred_id in zip(gt_ids, pred_ids):
+        # initialize clRecall priority queue
+        q.put(((-1) * locFgMat[gt_id, pred_id], gt_id, pred_id))
+        print(q.queue)
+
+    # initialize running instance masks with free/available pixel
+    for gt_id in np.unique(gt_ids):
+        # save skeletonized gt mask
+        gt_skel[gt_id] = skeletonize_3d(gt_labels[gt_id]) > 0
+        gt_avail[gt_id] = gt_skel[gt_id].copy()
+
+    for pred_id in np.unique(pred_ids):
+        pred_avail[pred_id] = pred_labels == (pred_id + 1) #todo: also for one inst per channel
+
+    # iterate through clRecall values in descending order
+    while len(q.queue) > 0:
+        print(q.queue)
+        clr, gt_id, pred_id = q.get()
+        print(clr, gt_id, pred_id)
+        # save as match
+        if gt_id not in matches:
+            matches[gt_id] = [pred_id]
+        else:
+            matches[gt_id] += [pred_id]
+        print("matches: ", matches)
+
+        # update running instance masks
+        gt_avail[gt_id] = np.logical_and(gt_avail[gt_id],
+                np.logical_not(pred_labels == (pred_id + 1)))
+        pred_avail[pred_id] = np.logical_and(pred_avail[pred_id],
+                np.logical_not(gt_labels[gt_id]))
+
+        # check for other occurences of pred and gt labels in queue
+        for o_clr, o_gt_id, o_pred_id in q.queue:
+            if o_gt_id == gt_id:
+                # remove old clRecall entry
+                q.queue.remove((o_clr, o_gt_id, o_pred_id))
+                if not only_one_gt:
+                    # add updated clRecall entry
+                    o_clr_new = np.sum(np.logical_and(gt_avail[o_gt_id],
+                            pred_labels == (pred_id + 1))) / float(np.sum(gt_skel[o_gt_id]))
+                    q.put(((-1) * o_clr_new, o_gt_id, o_pred_id))
+
+            if o_pred_id == pred_id:
+                # remove old clRecall entry
+                q.queue.remove((o_clr, o_gt_id, o_pred_id))
+                if not only_one_pred:
+                    # add updated clRecall entry
+                    o_clr_new = np.sum(np.logical_and(gt_skel[o_gt_id],
+                        pred_avail[o_pred_id])) / np.sum(gt_skel[o_gt_id])
+                    q.put(((-1) * o_clr_new, o_gt_id, o_pred_id))
+
+    return matches
 
 
 def get_false_labels(
