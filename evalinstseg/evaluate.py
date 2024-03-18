@@ -334,6 +334,11 @@ def evaluate_volume(
             metrics.addMetric(tblname, "false_split", len(fs_ind))
             metrics.addMetric(tblname, "false_merge", int(fm_count))
 
+        # add one-to-one matched true positives to general dict
+        if th == 0.5:
+            tp_05=tp
+            tp_05_cldice=list(locMat[gt_ind, pred_ind])
+
         # visualize tp and false labels
         if visualize and th == 0.5:
             if visualize_type == "nuclei" and tp > 0:
@@ -360,6 +365,12 @@ def evaluate_volume(
     metrics.addMetric("confusion_matrix", "avFscore", avFscore19)
     metrics.addMetric("confusion_matrix", "avFscore59", avFscore59)
     metrics.addMetric("confusion_matrix", "avFscore19", avFscore19)
+
+    metrics.addMetric("general", "TP_05", tp_05)
+    metrics.addMetric("general", "TP_05_rel", tp_05 / float(num_gt_labels))
+    metrics.addMetric("general", "TP_05_cldice", tp_05_cldice)
+    metrics.addMetric("general", "avg_TP_05_cldice", np.mean(tp_05_cldice))
+
 
     # additional metrics
     if len(add_general_metrics) > 0:
@@ -460,6 +471,8 @@ def average_flylight_score_over_instances(samples_foldn, result):
     tp_covs = []
     num_gt = []
     num_pred = []
+    tp_05 = []
+    tp_05_cldice = []
 
     for thresh in threshs:
         tp[thresh] = []
@@ -473,6 +486,10 @@ def average_flylight_score_over_instances(samples_foldn, result):
         num_pred.append(result[s]["general"]["Num Pred"])
         fm.append(result[s]["general"]["FM"])
         fs.append(result[s]["general"]["FS"])
+        tp_05.append(result[s]["general"]["TP_05"])
+        tp_05_cldice += list(np.array(
+            result[s]["general"]["TP_05_cldice"], dtype=np.float32))
+
         for thresh in threshs:
             tp[thresh].append(result[s][
                                   "confusion_matrix"][
@@ -511,7 +528,11 @@ def average_flylight_score_over_instances(samples_foldn, result):
         "avg_f1_cov_score": avS,
         "avFscore": np.mean(fscores),
         "FM": np.sum(fm),
-        "FS": np.sum(fs)
+        "FS": np.sum(fs),
+        "TP_05": np.sum(tp_05),
+        "TP_05_rel": np.sum(tp_05) / float(np.sum(num_gt)),
+        "TP_05_cldice": tp_05_cldice,
+        "avg_TP_05_cldice": np.mean(tp_05_cldice) if np.sum(tp_05) > 1 else 0.0
     }
     per_instance_counts["confusion_matrix"] = {"avFscore": np.mean(fscores)}
     per_instance_counts["gt_covs"] = gt_covs
@@ -544,6 +565,7 @@ def average_flylight_score_over_instances(samples_foldn, result):
     return avS, per_instance_counts
 
 
+# TODO: copy code from ppp
 def average_sets(acc_a, dict_a, acc_b, dict_b):
     threshs = [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9]
     acc = np.mean([acc_a, acc_b])
@@ -551,9 +573,14 @@ def average_sets(acc_a, dict_a, acc_b, dict_b):
     fscore = np.mean([dict_a["general"]["avFscore"],
         dict_b["general"]["avFscore"]])
     gt_covs = list(dict_a["gt_covs"]) + list(dict_b["gt_covs"])
+    num_gt = dict_a["general"]["Num GT"] + dict_b["general"]["Num GT"]
+    tp_05 = dict_a["general"]["TP_05"] + dict_b["general"]["TP_05"]
+    tp_05_cldice = list(dict_a["general"]["tp_05_cldice"]) + \
+            list(dict_b["general"]["tp_05_cldice"])
+
     per_instance_counts = {}
     per_instance_counts["general"] = {
-        "Num GT": dict_a["general"]["Num GT"] + dict_b["general"]["Num GT"],
+        "Num GT": num_gt,
         "Num Pred": dict_a["general"]["Num Pred"] + dict_b["general"]["Num Pred"],
         "avg_gt_skel_coverage": np.mean([
             dict_a["general"]["avg_gt_skel_coverage"],
@@ -562,6 +589,9 @@ def average_sets(acc_a, dict_a, acc_b, dict_b):
         "avFscore": fscore,
         "FM": dict_a["general"]["FM"] + dict_b["general"]["FM"],
         "FS": dict_a["general"]["FS"] + dict_b["general"]["FS"],
+        "TP_05": tp_05,
+        "TP_05_rel": tp_05 / float(num_gt),
+        "avg_TP_05_cldice": np.mean(tp_05_cldice)
     }
     per_instance_counts["confusion_matrix"] = {"avFscore": fscore}
     per_instance_counts["gt_covs"] = gt_covs
@@ -762,7 +792,10 @@ def main():
                     "confusion_matrix.th_0_5.false_merge",
                     "confusion_matrix.th_0_5.avg_tp_skel_coverage",
                     "general.FM",
-                    "general.FS"
+                    "general.FS",
+                    "general.TP_05",
+                    "general.TP_05_rel",
+                    "general.avg_TP_05_cldice"
                     ]
             args.visualize_type = "neuron"
             args.fm_thresh = 0.1
