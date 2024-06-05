@@ -7,6 +7,7 @@ import argparse
 import numpy as np
 import toml
 from natsort import natsorted
+from skimage.segmentation import relabel_sequential
 
 from .util import (
     assign_labels,
@@ -18,6 +19,8 @@ from .util import (
     get_output_name,
     read_file,
     greedy_many_to_many_matching,
+    get_gt_coverage,
+    get_centerline_overlap
 )
 from .visualize import (
     visualize_neurons,
@@ -108,6 +111,7 @@ def evaluate_file(
         from_scratch=False,
         fm_thresh=0.1,
         fs_thresh=0.05,
+        eval_dim=False,
         **kwargs
 ):
     """computes segmentation quality of file wrt. its ground truth
@@ -175,7 +179,11 @@ def evaluate_file(
     assert pred_labels.ndim == ndim or pred_labels.ndim == ndim+1
 
     # read ground truth data
-    gt_labels = read_file(gt_file, gt_key)
+    if eval_dim:
+        gt_labels, dim_insts = read_file(gt_file, gt_key, read_dim=True)
+    else:
+        gt_labels = read_file(gt_file, gt_key)
+        dim_insts = []
     logger.debug(
         "gt min %f, max %f, shape %s", np.min(gt_labels),
         np.max(gt_labels), gt_labels.shape)
@@ -199,7 +207,8 @@ def evaluate_file(
         foreground_only=foreground_only,
         partly=partly,
         fm_thresh=fm_thresh,
-        fs_thresh=fs_thresh
+        fs_thresh=fs_thresh,
+        dim_insts=dim_insts
     )
     metrics.save()
 
@@ -224,7 +233,8 @@ def evaluate_volume(
         foreground_only=False,
         partly=False,
         fm_thresh=0.1,
-        fs_thresh=0.05
+        fs_thresh=0.05,
+        dim_insts=[]
 ):
     """computes segmentation quality of file wrt. its ground truth
 
@@ -246,8 +256,13 @@ def evaluate_volume(
 
     # check sizes and crop if necessary
     gt_labels, pred_labels = check_and_fix_sizes(gt_labels, pred_labels, ndim)
-    gt_labels_rel, pred_labels_rel = check_fix_and_unify_ids(
-        gt_labels, pred_labels, remove_small_components, foreground_only)
+    if len(dim_insts) > 0:
+        gt_labels_rel, pred_labels_rel, dim_insts_rel = check_fix_and_unify_ids(
+            gt_labels, pred_labels, remove_small_components, foreground_only,
+            dim_insts=dim_insts)
+    else:
+        gt_labels_rel, pred_labels_rel = check_fix_and_unify_ids(
+            gt_labels, pred_labels, remove_small_components, foreground_only)
 
     logger.debug(
         "are there pixels with multiple instances?: "
@@ -258,7 +273,7 @@ def evaluate_volume(
     num_gt_labels = int(np.max(gt_labels_rel))
     num_matches = min(num_gt_labels, num_pred_labels)
 
-    # get localization criterion
+    # get localization criterion -> todo: check: do we still need recallMat_wo_overlap?
     locMat, recallMat, precMat, recallMat_wo_overlap = \
         compute_localization_criterion(
             pred_labels_rel, gt_labels_rel,
@@ -336,8 +351,8 @@ def evaluate_volume(
 
         # add one-to-one matched true positives to general dict
         if th == 0.5:
-            tp_05=tp
-            tp_05_cldice=list(locMat[gt_ind, pred_ind])
+            tp_05 = tp
+            tp_05_cldice = list(locMat[gt_ind, pred_ind])
 
         # visualize tp and false labels
         if visualize and th == 0.5:
@@ -371,40 +386,14 @@ def evaluate_volume(
     metrics.addMetric("general", "TP_05_cldice", tp_05_cldice)
     metrics.addMetric("general", "avg_TP_05_cldice", np.mean(tp_05_cldice))
 
-
     # additional metrics
     if len(add_general_metrics) > 0:
         # get coverage for ground truth instances
         if "avg_gt_skel_coverage" in add_general_metrics or \
            "avg_tp_skel_coverage" in add_general_metrics or \
            "avg_f1_cov_score" in add_general_metrics:
-            # only take max gt label for each pred label to not count
-            # pred labels twice for overlapping gt instances
-            max_gt_ind = np.argmax(precMat, axis=0)
-            gt_cov = []
-            # if both gt and pred have overlapping instances
-            if (np.any(np.sum(gt_labels, axis=0) != np.max(gt_labels, axis=0)) and
-                np.any(np.sum(pred_labels, axis=0) != np.max(pred_labels, axis=0))):
-                # recalculate clRecall for each gt and union of assigned
-                # predictions, as predicted instances can potentially overlap
-                max_gt_ind_unique = np.unique(max_gt_ind[max_gt_ind > 0])
-                for gt_i in np.arange(1, num_gt_labels + 1):
-                    if gt_i in max_gt_ind_unique:
-                        pred_union = np.zeros(
-                            pred_labels_rel.shape[1:],
-                            dtype=pred_labels_rel.dtype)
-                        for pred_i in np.arange(num_pred_labels + 1)[max_gt_ind == gt_i]:
-                            mask = np.max(pred_labels_rel == pred_i, axis=0)
-                            pred_union[mask] = 1
-                        gt_cov.append(get_centerline_overlap_single(
-                            gt_labels_rel, pred_union, gt_i, 1))
-                    else:
-                        gt_cov.append(0.0)
-            else:
-                # otherwise use previously computed values
-                for i in range(1, recallMat.shape[0]):
-                    gt_cov.append(np.sum(recallMat[i, max_gt_ind==i]))
-            gt_skel_coverage = np.mean(gt_cov)
+               gt_cov = get_gt_coverage(gt_labels_rel, pred_labels_rel, precMat, recallMat)
+               gt_skel_coverage = np.mean(gt_cov)
 
         if "avg_gt_skel_coverage" in add_general_metrics:
             metrics.addMetric(tblNameGen, "gt_skel_coverage", gt_cov)
@@ -450,8 +439,93 @@ def evaluate_volume(
                 fs = 0
                 for k, v in mmm.items():
                     fs += max(0, len(v) - 1)
-                print(fs)
                 metrics.addMetric("general", "FS", fs)
+
+        if "avg_gt_cov_dim" in add_general_metrics:
+            tp_05_dim = 0
+            tp_05_rel_dim = 0.0
+            gt_covs_dim = []
+            avg_cov_dim = 0
+            gt_dim = len(dim_insts)
+            if gt_dim > 0 and num_pred_labels > 0:
+                # prepare arrays for subset
+                subset_ids = np.array(dim_insts_rel) - 1
+                gt_labels_subset = gt_labels_rel[subset_ids]
+                # relabel sequential
+                offset = 1
+                for i in range(gt_labels_subset.shape[0]):
+                    gt_labels_subset[i], _, _ = relabel_sequential(
+                        gt_labels_subset[i].astype(int), offset)
+                    offset = np.max(gt_labels_subset[i]) + 1
+
+                precMat_subset = np.zeros((gt_dim+1, num_pred_labels+1), dtype=np.float32)
+                precMat_subset = get_centerline_overlap(
+                    pred_labels_rel, gt_labels_subset,
+                    np.transpose(precMat_subset))
+                precMat_subset = np.transpose(precMat_subset)
+                recallMat_subset = recallMat[[0,] + dim_insts_rel]
+                locMat_subset = locMat[[0,] + dim_insts_rel]
+                # compute coverage
+                gt_covs_dim = get_gt_coverage(gt_labels_subset, pred_labels_rel,
+                        precMat_subset, recallMat_subset)
+                avg_cov_dim = np.mean(gt_covs_dim)
+                # compute tp
+                if np.max(locMat_subset[1:, 1:]) > 0.5:
+                    tp_05_dim, _, _ = assign_labels(
+                        locMat_subset, assignment_strategy, 0.5, 1)
+                tp_05_rel_dim = tp_05_dim / float(gt_dim)
+            # add to metrics
+            metrics.addMetric("general", "GT_dim", gt_dim)
+            metrics.addMetric("general", "TP_05_dim", tp_05_dim)
+            metrics.addMetric("general", "TP_05_rel_dim", tp_05_rel_dim)
+            metrics.addMetric("general", "gt_covs_dim", gt_covs_dim)
+            metrics.addMetric("general", "avg_gt_cov_dim", avg_cov_dim)
+
+        if "avg_gt_cov_overlap" in add_general_metrics:
+            tp_05_ovlp = 0
+            tp_05_rel_ovlp = 0.0
+            gt_covs_ovlp = []
+            avg_cov_ovlp = 0
+            overlap_mask = np.sum(gt_labels_rel > 0, axis=0) > 1
+
+            ovlp_inst_ids = np.unique(gt_labels_rel[:, overlap_mask])
+            if 0 in ovlp_inst_ids:
+                ovlp_inst_ids = np.delete(ovlp_inst_ids, 0)
+            gt_ovlp = len(ovlp_inst_ids)
+            if gt_ovlp > 0:
+                # prepare arrays for subset
+                subset_ids = np.array(ovlp_inst_ids) - 1
+                gt_labels_subset = gt_labels_rel[subset_ids]
+                # relabel sequential
+                offset = 1
+                for i in range(gt_labels_subset.shape[0]):
+                    gt_labels_subset[i], _, _ = relabel_sequential(
+                        gt_labels_subset[i].astype(int), offset)
+                    offset = np.max(gt_labels_subset[i]) + 1
+
+                precMat_subset = np.zeros((gt_ovlp+1, num_pred_labels+1), dtype=np.float32)
+                precMat_subset = get_centerline_overlap(
+                    pred_labels_rel, gt_labels_subset,
+                    np.transpose(precMat_subset))
+                precMat_subset = np.transpose(precMat_subset)
+                recallMat_subset = recallMat[[0,] + list(ovlp_inst_ids)]
+                locMat_subset = locMat[[0,] + list(ovlp_inst_ids)]
+                # compute coverage
+                gt_covs_ovlp = get_gt_coverage(gt_labels_subset, pred_labels_rel,
+                        precMat_subset, recallMat_subset)
+                avg_cov_ovlp = np.mean(gt_covs_ovlp)
+
+                # compute tp
+                if np.max(locMat_subset[1:, 1:]) > 0.5:
+                    tp_05_ovlp, _, _ = assign_labels(
+                        locMat_subset, assignment_strategy, 0.5, 1)
+                tp_05_rel_ovlp = tp_05_ovlp / float(gt_ovlp)
+            # add to metrics
+            metrics.addMetric("general", "GT_overlap", gt_ovlp)
+            metrics.addMetric("general", "TP_05_overlap", tp_05_ovlp)
+            metrics.addMetric("general", "TP_05_rel_overlap", tp_05_rel_ovlp)
+            metrics.addMetric("general", "gt_covs_overlap", gt_covs_ovlp)
+            metrics.addMetric("general", "avg_gt_cov_overlap", avg_cov_ovlp)
 
     return metrics
 
@@ -473,6 +547,12 @@ def average_flylight_score_over_instances(samples_foldn, result):
     num_pred = []
     tp_05 = []
     tp_05_cldice = []
+    gt_dim = []
+    gt_covs_dim = []
+    tp_05_dim = []
+    gt_ovlp = []
+    gt_covs_ovlp = []
+    tp_05_ovlp = []
 
     for thresh in threshs:
         tp[thresh] = []
@@ -480,15 +560,25 @@ def average_flylight_score_over_instances(samples_foldn, result):
         fn[thresh] = []
     for s in samples_foldn:
         # todo: move type conversion to evaluate_file
+        c_gen = result[s]["general"]
         gt_covs += list(np.array(
-            result[s]["general"]["gt_skel_coverage"], dtype=np.float32))
-        num_gt.append(result[s]["general"]["Num GT"])
-        num_pred.append(result[s]["general"]["Num Pred"])
-        fm.append(result[s]["general"]["FM"])
-        fs.append(result[s]["general"]["FS"])
-        tp_05.append(result[s]["general"]["TP_05"])
-        tp_05_cldice += list(np.array(
-            result[s]["general"]["TP_05_cldice"], dtype=np.float32))
+            c_gen["gt_skel_coverage"], dtype=np.float32))
+        num_gt.append(c_gen["Num GT"])
+        num_pred.append(c_gen["Num Pred"])
+        if "FM" in c_gen.keys():
+            fm.append(c_gen["FM"])
+            fs.append(c_gen["FS"])
+            tp_05.append(c_gen["TP_05"])
+            tp_05_cldice += list(np.array(
+                c_gen["TP_05_cldice"], dtype=np.float32))
+        if "GT_dim" in c_gen.keys():
+            gt_dim.append(c_gen["GT_dim"])
+            tp_05_dim.append(c_gen["TP_05_dim"])
+            gt_covs_dim += list(np.array(c_gen["gt_covs_dim"], dtype=np.float32))
+        if "GT_overlap" in c_gen.keys():
+            gt_ovlp.append(c_gen["GT_overlap"])
+            tp_05_ovlp.append(c_gen["TP_05_overlap"])
+            gt_covs_ovlp += list(np.array(c_gen["gt_covs_overlap"], dtype=np.float32))
 
         for thresh in threshs:
             tp[thresh].append(result[s][
@@ -514,10 +604,8 @@ def average_flylight_score_over_instances(samples_foldn, result):
                     result[s]["confusion_matrix"]["th_0_5"][
                         "tp_skel_coverage"], dtype=np.float32))
     for thresh in threshs:
-        print(tp[thresh], fp[thresh], fn[thresh])
         fscores.append(2 * np.sum(tp[thresh]) / (
             2 * np.sum(tp[thresh]) + np.sum(fp[thresh]) + np.sum(fn[thresh])))
-    print(fscores)
     avS = 0.5 * np.mean(fscores) + 0.5 * np.mean(gt_covs)
 
     per_instance_counts = {}
@@ -532,7 +620,15 @@ def average_flylight_score_over_instances(samples_foldn, result):
         "TP_05": np.sum(tp_05),
         "TP_05_rel": np.sum(tp_05) / float(np.sum(num_gt)),
         "TP_05_cldice": tp_05_cldice,
-        "avg_TP_05_cldice": np.mean(tp_05_cldice) if np.sum(tp_05) > 1 else 0.0
+        "avg_TP_05_cldice": np.mean(tp_05_cldice) if np.sum(tp_05) > 0 else 0.0,
+        "GT_dim": np.sum(gt_dim),
+        "TP_05_dim": np.sum(tp_05_dim),
+        "TP_05_rel_dim": np.sum(tp_05_dim) / float(np.sum(gt_dim)),
+        "avg_gt_cov_dim": np.mean(gt_covs_dim),
+        "GT_overlap": np.sum(gt_ovlp),
+        "TP_05_overlap": np.sum(tp_05_ovlp),
+        "TP_05_rel_overlap": np.sum(tp_05_ovlp) / float(np.sum(gt_ovlp)),
+        "avg_gt_cov_overlap": np.mean(gt_covs_ovlp)
     }
     per_instance_counts["confusion_matrix"] = {"avFscore": np.mean(fscores)}
     per_instance_counts["gt_covs"] = gt_covs
@@ -569,7 +665,6 @@ def average_flylight_score_over_instances(samples_foldn, result):
 def average_sets(acc_a, dict_a, acc_b, dict_b):
     threshs = [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9]
     acc = np.mean([acc_a, acc_b])
-    print(acc_a, acc_b, acc)
     fscore = np.mean([dict_a["general"]["avFscore"],
         dict_b["general"]["avFscore"]])
     gt_covs = list(dict_a["gt_covs"]) + list(dict_b["gt_covs"])

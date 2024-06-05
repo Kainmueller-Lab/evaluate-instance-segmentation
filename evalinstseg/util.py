@@ -103,7 +103,8 @@ def remove_empty_channels(labels):
 
 
 def check_fix_and_unify_ids(
-        gt_labels, pred_labels, remove_small_components, foreground_only):
+        gt_labels, pred_labels, remove_small_components, foreground_only,
+        dim_insts=[]):
     """unify prediction and gt labelling styles
 
     Note
@@ -154,15 +155,29 @@ def check_fix_and_unify_ids(
             pred_labels[i].astype(int), offset)
         offset = np.max(pred_labels[i]) + 1
     offset = 1
+    fw_map = None
     for i in range(gt_labels.shape[0]):
-        gt_labels[i], _, _ = relabel_sequential(
+        gt_labels[i], c_fw_map, _ = relabel_sequential(
             gt_labels[i].astype(int), offset)
+        if fw_map is None:
+            fw_map = c_fw_map
+        else:
+            ids = np.isin(c_fw_map.in_values, fw_map.in_values, invert=True)
+            if np.any(ids):
+                fw_map.in_values = np.concatenate(
+                        [fw_map.in_values, c_fw_map.in_values[ids]])
+                fw_map.out_values = np.concatenate(
+                        [fw_map.out_values, c_fw_map.out_values[ids]])
         offset = np.max(gt_labels[i]) + 1
 
-    return gt_labels, pred_labels
+    if len(dim_insts) > 0:
+        dim_insts_rel = list(fw_map[np.array(dim_insts)])
+        return gt_labels, pred_labels, dim_insts_rel
+    else:
+        return gt_labels, pred_labels
 
 
-def read_file(infn, key):
+def read_file(infn, key, read_dim=False):
     """read image/volume in hdf, tif and zarr format"""
     if infn.endswith(".hdf"):
         with h5py.File(infn, 'r') as f:
@@ -177,9 +192,15 @@ def read_file(infn, key):
             logger.info("File %s not found!", infn)
             raise e
         volume = np.array(f[key])
+        if read_dim:
+            if "dim_neurons" in f[key].attrs.keys():
+                dim_insts = f[key].attrs["dim_neurons"]
     else:
         raise NotImplementedError("invalid file format %s", infn)
-    return volume
+    if read_dim:
+        return volume, dim_insts
+    else:
+        return volume
 
 
 def get_output_name(
@@ -222,6 +243,40 @@ def filter_components(volume, thresh):
     )
     return volume
 
+
+def get_gt_coverage(gt_labels, pred_labels, precMat, recallMat):
+    # only take max gt label for each pred label to not count
+    # pred labels twice for overlapping gt instances
+    num_pred_labels = int(np.max(pred_labels))
+    num_gt_labels = int(np.max(gt_labels))
+    max_gt_ind = np.argmax(precMat, axis=0)
+
+    gt_cov = []
+    # if both gt and pred have overlapping instances
+    if (np.any(np.sum(gt_labels, axis=0) != np.max(gt_labels, axis=0)) and
+        np.any(np.sum(pred_labels, axis=0) != np.max(pred_labels, axis=0))):
+        # recalculate clRecall for each gt and union of assigned
+        # predictions, as predicted instances can potentially overlap
+        max_gt_ind_unique = np.unique(max_gt_ind[max_gt_ind > 0])
+        for gt_i in np.arange(1, num_gt_labels + 1):
+            if gt_i in max_gt_ind_unique:
+                pred_union = np.zeros(
+                    pred_labels.shape[1:],
+                    dtype=pred_labels.dtype)
+                for pred_i in np.arange(num_pred_labels + 1)[max_gt_ind == gt_i]:
+                    mask = np.max(pred_labels == pred_i, axis=0)
+                    pred_union[mask] = 1
+                gt_cov.append(get_centerline_overlap_single(
+                    gt_labels, pred_union, gt_i, 1))
+            else:
+                gt_cov.append(0.0)
+    else:
+        # otherwise use previously computed values
+        for i in range(1, recallMat.shape[0]):
+            gt_cov.append(np.sum(recallMat[i, max_gt_ind==i]))
+    return gt_cov
+
+
 def get_centerline_overlap_single(
         to_skeletonize, compare_with, skeletonize_label, compare_label):
     """skeletonizes `to_skeletonize` and checks how much overlap
@@ -251,7 +306,8 @@ def get_centerline_overlap(to_skeletonize, compare_with, match):
     # assumes channel_dim
     fg = np.max(compare_with > 0, axis=0).astype(np.uint8)
 
-    # assumes uniquely labeled instances (i.e., no binary masks per channel)
+    # assumes uniquely and sequentially labeled instances
+    # (i.e., no binary masks per channel)
     skeleton_ids = np.unique(to_skeletonize[to_skeletonize > 0])
     for skeleton_id in skeleton_ids:
         logger.debug("compute centerline overlap for %i", skeleton_id)
@@ -456,7 +512,6 @@ def greedy_many_to_many_matching(gt_labels, pred_labels, locMat, thresh,
     for gt_id, pred_id in zip(gt_ids, pred_ids):
         # initialize clRecall priority queue
         q.put(((-1) * locFgMat[gt_id, pred_id], gt_id, pred_id))
-        print(q.queue)
 
     # initialize running instance masks with free/available pixel
     for gt_id in np.unique(gt_ids):
@@ -469,15 +524,12 @@ def greedy_many_to_many_matching(gt_labels, pred_labels, locMat, thresh,
 
     # iterate through clRecall values in descending order
     while len(q.queue) > 0:
-        print(q.queue)
         clr, gt_id, pred_id = q.get()
-        print(clr, gt_id, pred_id)
         # save as match
         if gt_id not in matches:
             matches[gt_id] = [pred_id]
         else:
             matches[gt_id] += [pred_id]
-        print("matches: ", matches)
 
         # update running instance masks
         gt_avail[gt_id] = np.logical_and(gt_avail[gt_id],
