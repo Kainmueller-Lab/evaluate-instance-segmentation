@@ -8,19 +8,25 @@ import numpy as np
 import toml
 from natsort import natsorted
 from skimage.segmentation import relabel_sequential
+import pdb
 
+from .metrics import Metrics
 from .util import (
-    assign_labels,
     check_and_fix_sizes,
     check_fix_and_unify_ids,
-    compute_localization_criterion,
     get_centerline_overlap_single,
-    get_false_labels,
     get_output_name,
     read_file,
-    greedy_many_to_many_matching,
     get_gt_coverage,
+)
+from .localize import (
+    compute_localization_criterion,
     get_centerline_overlap
+)
+from .match import (
+    assign_labels,
+    get_false_labels,
+    greedy_many_to_many_matching,
 )
 from .visualize import (
     visualize_neurons,
@@ -29,63 +35,6 @@ from .visualize import (
 from .summarize import summarize_metric_dict
 
 logger = logging.getLogger(__name__)
-
-
-class Metrics:
-    """class that stores variety of computed metrics
-
-    Attributes
-    ----------
-    metricsDict: dict
-        python dict containing results.
-        filled by calling add/getTable and addMetric.
-    fn: str/Path
-        filename without toml extension. results will be written to this file.
-    """
-    def __init__(self, fn):
-        self.metricsDict = {}
-        self.fn = fn
-
-    def save(self):
-        """dump results to toml file."""
-        logger.info("saving %s", self.fn)
-        with open(self.fn+".toml", 'w') as tomlFl:
-            toml.dump(self.metricsDict, tomlFl)
-
-    def addTable(self, name, dct=None):
-        """add new sub-table to result dict
-
-        pass name containing '.' for nested tables,
-        e.g., passing "confusion_matrix.th_0_5" results in:
-        `dict = {"confusion_matrix": {"th_0_5": result}}`
-        """
-        levels = name.split(".")
-        if dct is None:
-            dct = self.metricsDict
-        if levels[0] not in dct:
-            dct[levels[0]] = {}
-        if len(levels) > 1:
-            name = ".".join(levels[1:])
-            self.addTable(name, dct[levels[0]])
-
-    def getTable(self, name, dct=None):
-        """access existing sub-table in result dict
-
-        pass name containing '.' to access nested tables.
-        """
-        levels = name.split(".")
-        if dct is None:
-            dct = self.metricsDict
-        if len(levels) == 1:
-            return dct[levels[0]]
-        else:
-            name = ".".join(levels[1:])
-            return self.getTable(name, dct=dct[levels[0]])
-
-    def addMetric(self, table_name, name, value):
-        """add result for metric `name` to sub-table `table_name` """
-        tbl = self.getTable(table_name)
-        tbl[name] = value
 
 
 def evaluate_file(
@@ -106,7 +55,6 @@ def evaluate_file(
         foreground_only=False,
         remove_small_components=None,
         evaluate_false_labels=False,
-        unique_false_labels=False,
         check_for_metric=None,
         from_scratch=False,
         fm_thresh=0.1,
@@ -198,7 +146,6 @@ def evaluate_file(
         localization_criterion=localization_criterion,
         assignment_strategy=assignment_strategy,
         evaluate_false_labels=evaluate_false_labels,
-        unique_false_labels=unique_false_labels,
         add_general_metrics=add_general_metrics,
         visualize=visualize,
         visualize_type=visualize_type,
@@ -215,7 +162,6 @@ def evaluate_file(
     return metrics.metricsDict
 
 
-# todo: should pixelwise neuron evaluation also be possible?
 def evaluate_volume(
         gt_labels,
         pred_labels,
@@ -224,7 +170,6 @@ def evaluate_volume(
         localization_criterion="iou",
         assignment_strategy="hungarian",
         evaluate_false_labels=False,
-        unique_false_labels=False,
         add_general_metrics=[],
         visualize=False,
         visualize_type="nuclei",
@@ -273,7 +218,7 @@ def evaluate_volume(
     num_gt_labels = int(np.max(gt_labels_rel))
     num_matches = min(num_gt_labels, num_pred_labels)
 
-    # get localization criterion -> todo: check: do we still need recallMat_wo_overlap?
+    # get localization criterion -> TODO: check: do we still need recallMat_wo_overlap?
     locMat, recallMat, precMat, recallMat_wo_overlap = \
         compute_localization_criterion(
             pred_labels_rel, gt_labels_rel,
@@ -309,14 +254,11 @@ def evaluate_volume(
             fp_ind, fn_ind, fs_ind, fm_pred_ind, fm_gt_ind, \
                 fm_count, fp_ind_only_bg = get_false_labels(
                     pred_ind, gt_ind, num_pred_labels, num_gt_labels,
-                    locMat, precMat, recallMat, th, unique_false_labels,
+                    locMat, precMat, recallMat, th,
                     recallMat_wo_overlap)
 
         # get false positive and false negative counters
-        if unique_false_labels:
-            fp = len(fp_ind)
-            fn = len(fn_ind)
-        elif partly:
+        if partly:
             fp = len(fs_ind)
             fp_ind = fs_ind
             fn = num_gt_labels - tp
