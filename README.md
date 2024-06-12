@@ -20,8 +20,18 @@ pip install -e .
 
 usage:
 -------
-It is currently use by importing the module and calling the `evaluate_file` function.
-It will be updated to be callable from the command line.
+You can either import the module and call the `evaluate_file` function,
+or you can use the command line, similar to here:
+
+```
+evalinstseg \
+--res_file tests/pred/R14A02-20180905_65_A6.hdf \
+--res_key volumes/gmm_label_cleaned \
+--gt_file tests/gt/R14A02-20180905_65_A6.zarr \
+--gt_key volumes/gt_instances \
+--out_dir tests/results \
+--app flylight
+```
 
 output:
 --------
