@@ -1,0 +1,174 @@
+[general]
+"Num GT" = 7
+"Num Pred" = 9
+TP_05 = 3
+TP_05_rel = 0.42857142857142855
+TP_05_cldice = [ "0.99020946", "0.96136016", "0.7825463",]
+avg_TP_05_cldice = "0.91137195"
+gt_skel_coverage = [ "0.08819876", "0.9552964", "0.0", "0.64759886", "0.0", "0.99777406", "0.0",]
+avg_gt_skel_coverage = "0.384124"
+avg_f1_cov_score = "0.36567311651176876"
+FM = 0
+FS = 0
+
+[confusion_matrix]
+avAP = "0.11111111111111109"
+avAP59 = "0.11111111111111109"
+avAP19 = "0.12522045855379188"
+avFscore = "0.3472222222222222"
+avFscore59 = "0.325"
+avFscore19 = "0.3472222222222222"
+
+[confusion_matrix.th_0_1]
+AP_TP = 3
+AP_FP = 6
+AP_FN = 4
+precision = 0.3333333333333333
+recall = 0.42857142857142855
+AP = 0.14285714285714285
+fscore = 0.375
+false_split = 3
+false_merge = 0
+
+[confusion_matrix.th_0_2]
+AP_TP = 3
+AP_FP = 6
+AP_FN = 4
+precision = 0.3333333333333333
+recall = 0.42857142857142855
+AP = 0.14285714285714285
+fscore = 0.375
+false_split = 3
+false_merge = 0
+
+[confusion_matrix.th_0_3]
+AP_TP = 3
+AP_FP = 6
+AP_FN = 4
+precision = 0.3333333333333333
+recall = 0.42857142857142855
+AP = 0.14285714285714285
+fscore = 0.375
+false_split = 3
+false_merge = 0
+
+[confusion_matrix.th_0_4]
+AP_TP = 3
+AP_FP = 6
+AP_FN = 4
+precision = 0.3333333333333333
+recall = 0.42857142857142855
+AP = 0.14285714285714285
+fscore = 0.375
+false_split = 3
+false_merge = 0
+
+[confusion_matrix.th_0_5]
+AP_TP = 3
+AP_FP = 6
+AP_FN = 4
+precision = 0.3333333333333333
+recall = 0.42857142857142855
+AP = 0.14285714285714285
+fscore = 0.375
+false_split = 3
+false_merge = 0
+
+[confusion_matrix.th_0_6]
+AP_TP = 3
+AP_FP = 6
+AP_FN = 4
+precision = 0.3333333333333333
+recall = 0.42857142857142855
+AP = 0.14285714285714285
+fscore = 0.375
+false_split = 3
+false_merge = 0
+
+[confusion_matrix.th_0_7]
+AP_TP = 3
+AP_FP = 6
+AP_FN = 4
+precision = 0.3333333333333333
+recall = 0.42857142857142855
+AP = 0.14285714285714285
+fscore = 0.375
+false_split = 3
+false_merge = 0
+
+[confusion_matrix.th_0_8]
+AP_TP = 2
+AP_FP = 7
+AP_FN = 5
+precision = 0.2222222222222222
+recall = 0.2857142857142857
+AP = 0.06349206349206349
+fscore = 0.25
+false_split = 4
+false_merge = 0
+
+[confusion_matrix.th_0_9]
+AP_TP = 2
+AP_FP = 7
+AP_FN = 5
+precision = 0.2222222222222222
+recall = 0.2857142857142857
+AP = 0.06349206349206349
+fscore = 0.25
+false_split = 4
+false_merge = 0
+
+[confusion_matrix.th_0_55]
+AP_TP = 3
+AP_FP = 6
+AP_FN = 4
+precision = 0.3333333333333333
+recall = 0.42857142857142855
+AP = 0.14285714285714285
+fscore = 0.375
+false_split = 3
+false_merge = 0
+
+[confusion_matrix.th_0_65]
+AP_TP = 3
+AP_FP = 6
+AP_FN = 4
+precision = 0.3333333333333333
+recall = 0.42857142857142855
+AP = 0.14285714285714285
+fscore = 0.375
+false_split = 3
+false_merge = 0
+
+[confusion_matrix.th_0_75]
+AP_TP = 3
+AP_FP = 6
+AP_FN = 4
+precision = 0.3333333333333333
+recall = 0.42857142857142855
+AP = 0.14285714285714285
+fscore = 0.375
+false_split = 3
+false_merge = 0
+
+[confusion_matrix.th_0_85]
+AP_TP = 2
+AP_FP = 7
+AP_FN = 5
+precision = 0.2222222222222222
+recall = 0.2857142857142857
+AP = 0.06349206349206349
+fscore = 0.25
+false_split = 4
+false_merge = 0
+
+[confusion_matrix.th_0_95]
+AP_TP = 2
+AP_FP = 7
+AP_FN = 5
+precision = 0.2222222222222222
+recall = 0.2857142857142857
+AP = 0.06349206349206349
+fscore = 0.25
+false_split = 4
+false_merge = 0

@@ -63,7 +63,7 @@ def assign_labels(locMat, assignment_strategy, thresh, num_matches):
                 tp_pred_ind.append(pred_idx)
         tp = len(tp_pred_ind)
 
-    # todo: merge overlap_0_5 here
+    # TODO: merge overlap_0_5 here
     #elif assignment_strategy == "overlap_0_5":
     else:
         raise NotImplementedError(

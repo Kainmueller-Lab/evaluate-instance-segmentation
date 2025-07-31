@@ -142,3 +142,20 @@ def get_centerline_overlap(to_skeletonize, compare_with, match):
     return match
 
 
+def get_centerline_overlap_single(
+        to_skeletonize, compare_with, skeletonize_label, compare_label):
+    """skeletonizes `to_skeletonize` and checks how much overlap
+    `compare_with` has with the skeletons, for a single pair of labels)
+    """
+    to_skeletonize = to_skeletonize == skeletonize_label
+    if to_skeletonize.ndim == 4:
+        to_skeletonize = np.max(to_skeletonize, axis=0)
+    # note: skeletonize_3d also works for 2d images
+    skeleton = skeletonize_3d(to_skeletonize) > 0
+    compare_with = compare_with == compare_label
+    if compare_with.ndim == 4:
+        compare_with == np.max(compare_with, axis=0)
+
+    return (np.sum(compare_with[skeleton], dtype=float)
+            / np.sum(skeleton, dtype=float))
+

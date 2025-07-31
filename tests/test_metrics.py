@@ -106,7 +106,10 @@ class TestMetrics(unittest.TestCase):
                 "assignment_strategy": "greedy",
                 "add_general_metrics": [
                     "avg_gt_skel_coverage",
-                    "avg_f1_cov_score"],
+                    "avg_f1_cov_score",
+                    "false_merge",
+                    "false_split"
+                    ],
                 "evaluate_false_labels": True,
                 "visualize": False,
                 "visualize_type": None,

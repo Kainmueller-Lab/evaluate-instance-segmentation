@@ -14,10 +14,8 @@ from .metrics import Metrics
 from .util import (
     check_and_fix_sizes,
     check_fix_and_unify_ids,
-    get_centerline_overlap_single,
     get_output_name,
     read_file,
-    get_gt_coverage,
 )
 from .localize import (
     compute_localization_criterion,
@@ -28,11 +26,22 @@ from .match import (
     get_false_labels,
     greedy_many_to_many_matching,
 )
+from .compute import (
+    get_gt_coverage,
+    get_gt_coverage_dim,
+    get_gt_coverage_overlap,
+    get_m2m_fm,
+    get_m2m_fs
+)
 from .visualize import (
     visualize_neurons,
     visualize_nuclei
 )
-from .summarize import summarize_metric_dict
+from .summarize import (
+    summarize_metric_dict,
+    average_flylight_score_over_instances,
+    average_sets
+)
 
 logger = logging.getLogger(__name__)
 
@@ -334,7 +343,8 @@ def evaluate_volume(
         if "avg_gt_skel_coverage" in add_general_metrics or \
            "avg_tp_skel_coverage" in add_general_metrics or \
            "avg_f1_cov_score" in add_general_metrics:
-               gt_cov = get_gt_coverage(gt_labels_rel, pred_labels_rel, precMat, recallMat)
+               gt_cov = get_gt_coverage(gt_labels_rel, pred_labels_rel,
+                       precMat, recallMat)
                gt_skel_coverage = np.mean(gt_cov)
 
         if "avg_gt_skel_coverage" in add_general_metrics:
@@ -358,64 +368,24 @@ def evaluate_volume(
             avg_f1_cov_score = 0.5 * avFscore19 + 0.5 * gt_skel_coverage
             metrics.addMetric(tblNameGen, "avg_f1_cov_score", avg_f1_cov_score)
 
-        if "false_merge" in add_general_metrics or \
-                "false_split" in add_general_metrics:
-            # call many-to-many matching based on clRecall
-            # get false merges
-            mmm = greedy_many_to_many_matching(gt_labels, pred_labels, recallMat, fm_thresh)
-            if mmm is None:
-                metrics.addMetric("general", "FM", 0)
-            else:
-                fms = np.zeros(num_pred_labels) # without 0 background
-                for k, v in mmm.items():
-                    for cv in v:
-                        fms[cv-1] += 1
-                fms = np.maximum(fms - 1, np.zeros(num_pred_labels))
-                metrics.addMetric("general", "FM", int(np.sum(fms)))
-            # get false splits
+        # TODO: rename "false_merge" and "false_splits" to sth with many-to-many?
+        m2m_matches = None
+        if "false_merge" in add_general_metrics:
+            fm, m2m_matches = get_m2m_fm(gt_labels, pred_labels, num_pred_labels,
+                    recallMat, fm_thresh)
+            metrics.addMetric("general", "FM", fm)
+        if "false_split" in add_general_metrics:
+            # if fm and fs thresh are different, reset matches, reuse otherwise
             if fm_thresh != fs_thresh:
-                mmm = greedy_many_to_many_matching(gt_labels, pred_labels, recallMat, fs_thresh)
-            if mmm is None:
-                metrics.addMetric("general", "FS", 0)
-            else:
-                fs = 0
-                for k, v in mmm.items():
-                    fs += max(0, len(v) - 1)
-                metrics.addMetric("general", "FS", fs)
+                m2m_matches = None
+            fs, _ = get_m2m_fs(gt_labels, pred_labels, recallMat,
+                    fs_thresh, m2m_matches)
+            metrics.addMetric("general", "FS", fs)
 
         if "avg_gt_cov_dim" in add_general_metrics:
-            tp_05_dim = 0
-            tp_05_rel_dim = 0.0
-            gt_covs_dim = []
-            avg_cov_dim = 0
-            gt_dim = len(dim_insts)
-            if gt_dim > 0 and num_pred_labels > 0:
-                # prepare arrays for subset
-                subset_ids = np.array(dim_insts_rel) - 1
-                gt_labels_subset = gt_labels_rel[subset_ids]
-                # relabel sequential
-                offset = 1
-                for i in range(gt_labels_subset.shape[0]):
-                    gt_labels_subset[i], _, _ = relabel_sequential(
-                        gt_labels_subset[i].astype(int), offset)
-                    offset = np.max(gt_labels_subset[i]) + 1
-
-                precMat_subset = np.zeros((gt_dim+1, num_pred_labels+1), dtype=np.float32)
-                precMat_subset = get_centerline_overlap(
-                    pred_labels_rel, gt_labels_subset,
-                    np.transpose(precMat_subset))
-                precMat_subset = np.transpose(precMat_subset)
-                recallMat_subset = recallMat[[0,] + dim_insts_rel]
-                locMat_subset = locMat[[0,] + dim_insts_rel]
-                # compute coverage
-                gt_covs_dim = get_gt_coverage(gt_labels_subset, pred_labels_rel,
-                        precMat_subset, recallMat_subset)
-                avg_cov_dim = np.mean(gt_covs_dim)
-                # compute tp
-                if np.max(locMat_subset[1:, 1:]) > 0.5:
-                    tp_05_dim, _, _ = assign_labels(
-                        locMat_subset, assignment_strategy, 0.5, 1)
-                tp_05_rel_dim = tp_05_dim / float(gt_dim)
+            gt_dim, tp_05_dim, tp_05_rel_dim, gt_covs_dim, avg_cov_dim = \
+                    get_gt_coverage_dim(dim_insts_rel, gt_labels_rel, pred_labels_rel,
+                            num_pred_labels, locMat, recallMat)
             # add to metrics
             metrics.addMetric("general", "GT_dim", gt_dim)
             metrics.addMetric("general", "TP_05_dim", tp_05_dim)
@@ -424,44 +394,12 @@ def evaluate_volume(
             metrics.addMetric("general", "avg_gt_cov_dim", avg_cov_dim)
 
         if "avg_gt_cov_overlap" in add_general_metrics:
-            tp_05_ovlp = 0
-            tp_05_rel_ovlp = 0.0
-            gt_covs_ovlp = []
-            avg_cov_ovlp = 0
             overlap_mask = np.sum(gt_labels_rel > 0, axis=0) > 1
-
             ovlp_inst_ids = np.unique(gt_labels_rel[:, overlap_mask])
-            if 0 in ovlp_inst_ids:
-                ovlp_inst_ids = np.delete(ovlp_inst_ids, 0)
-            gt_ovlp = len(ovlp_inst_ids)
-            if gt_ovlp > 0:
-                # prepare arrays for subset
-                subset_ids = np.array(ovlp_inst_ids) - 1
-                gt_labels_subset = gt_labels_rel[subset_ids]
-                # relabel sequential
-                offset = 1
-                for i in range(gt_labels_subset.shape[0]):
-                    gt_labels_subset[i], _, _ = relabel_sequential(
-                        gt_labels_subset[i].astype(int), offset)
-                    offset = np.max(gt_labels_subset[i]) + 1
 
-                precMat_subset = np.zeros((gt_ovlp+1, num_pred_labels+1), dtype=np.float32)
-                precMat_subset = get_centerline_overlap(
-                    pred_labels_rel, gt_labels_subset,
-                    np.transpose(precMat_subset))
-                precMat_subset = np.transpose(precMat_subset)
-                recallMat_subset = recallMat[[0,] + list(ovlp_inst_ids)]
-                locMat_subset = locMat[[0,] + list(ovlp_inst_ids)]
-                # compute coverage
-                gt_covs_ovlp = get_gt_coverage(gt_labels_subset, pred_labels_rel,
-                        precMat_subset, recallMat_subset)
-                avg_cov_ovlp = np.mean(gt_covs_ovlp)
-
-                # compute tp
-                if np.max(locMat_subset[1:, 1:]) > 0.5:
-                    tp_05_ovlp, _, _ = assign_labels(
-                        locMat_subset, assignment_strategy, 0.5, 1)
-                tp_05_rel_ovlp = tp_05_ovlp / float(gt_ovlp)
+            gt_ovlp, tp_05_ovlp, tp_05_rel_ovlp, gt_covs_ovlp, avg_cov_ovlp = \
+                    get_gt_coverage_overlap(dim_insts, gt_labels_rel, pred_labels_rel,
+                            num_pred_labels, locMat, recallMat)
             # add to metrics
             metrics.addMetric("general", "GT_overlap", gt_ovlp)
             metrics.addMetric("general", "TP_05_overlap", tp_05_ovlp)
@@ -472,192 +410,7 @@ def evaluate_volume(
     return metrics
 
 
-def average_flylight_score_over_instances(samples_foldn, result):
-    # heads up: hard coded for 0.5 average F1 + 0.5 average gt coverage
-    threshs = [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9]
-    fscores = []
-    gt_covs = []
-    tp = {}
-    fp = {}
-    fn = {}
-    false_split = []    # to remove
-    false_merge = []    # to remove
-    fm = []
-    fs = []
-    tp_covs = []
-    num_gt = []
-    num_pred = []
-    tp_05 = []
-    tp_05_cldice = []
-    gt_dim = []
-    gt_covs_dim = []
-    tp_05_dim = []
-    gt_ovlp = []
-    gt_covs_ovlp = []
-    tp_05_ovlp = []
-
-    for thresh in threshs:
-        tp[thresh] = []
-        fp[thresh] = []
-        fn[thresh] = []
-    for s in samples_foldn:
-        # todo: move type conversion to evaluate_file
-        c_gen = result[s]["general"]
-        gt_covs += list(np.array(
-            c_gen["gt_skel_coverage"], dtype=np.float32))
-        num_gt.append(c_gen["Num GT"])
-        num_pred.append(c_gen["Num Pred"])
-        if "FM" in c_gen.keys():
-            fm.append(c_gen["FM"])
-            fs.append(c_gen["FS"])
-            tp_05.append(c_gen["TP_05"])
-            tp_05_cldice += list(np.array(
-                c_gen["TP_05_cldice"], dtype=np.float32))
-        if "GT_dim" in c_gen.keys():
-            gt_dim.append(c_gen["GT_dim"])
-            tp_05_dim.append(c_gen["TP_05_dim"])
-            gt_covs_dim += list(np.array(c_gen["gt_covs_dim"], dtype=np.float32))
-        if "GT_overlap" in c_gen.keys():
-            gt_ovlp.append(c_gen["GT_overlap"])
-            tp_05_ovlp.append(c_gen["TP_05_overlap"])
-            gt_covs_ovlp += list(np.array(c_gen["gt_covs_overlap"], dtype=np.float32))
-
-        for thresh in threshs:
-            tp[thresh].append(result[s][
-                                  "confusion_matrix"][
-                                  "th_" + str(thresh).replace(".", "_")][
-                                  "AP_TP"])
-            fp[thresh].append(result[s][
-                                  "confusion_matrix"][
-                                  "th_" + str(thresh).replace(".", "_")][
-                                  "AP_FP"])
-            fn[thresh].append(result[s][
-                                  "confusion_matrix"][
-                                  "th_" + str(thresh).replace(".", "_")][
-                                  "AP_FN"])
-            if thresh == 0.5:
-                false_split.append(result[s][
-                                       "confusion_matrix"]["th_0_5"][
-                                       "false_split"])
-                false_merge.append(result[s][
-                                       "confusion_matrix"]["th_0_5"][
-                                       "false_merge"])
-                tp_covs += list(np.array(
-                    result[s]["confusion_matrix"]["th_0_5"][
-                        "tp_skel_coverage"], dtype=np.float32))
-    for thresh in threshs:
-        fscores.append(2 * np.sum(tp[thresh]) / (
-            2 * np.sum(tp[thresh]) + np.sum(fp[thresh]) + np.sum(fn[thresh])))
-    avS = 0.5 * np.mean(fscores) + 0.5 * np.mean(gt_covs)
-
-    per_instance_counts = {}
-    per_instance_counts["general"] = {
-        "Num GT": np.sum(num_gt),
-        "Num Pred": np.sum(num_pred),
-        "avg_gt_skel_coverage": np.mean(gt_covs),
-        "avg_f1_cov_score": avS,
-        "avFscore": np.mean(fscores),
-        "FM": np.sum(fm),
-        "FS": np.sum(fs),
-        "TP_05": np.sum(tp_05),
-        "TP_05_rel": np.sum(tp_05) / float(np.sum(num_gt)),
-        "TP_05_cldice": tp_05_cldice,
-        "avg_TP_05_cldice": np.mean(tp_05_cldice) if np.sum(tp_05) > 0 else 0.0,
-        "GT_dim": np.sum(gt_dim),
-        "TP_05_dim": np.sum(tp_05_dim),
-        "TP_05_rel_dim": np.sum(tp_05_dim) / float(np.sum(gt_dim)),
-        "avg_gt_cov_dim": np.mean(gt_covs_dim),
-        "GT_overlap": np.sum(gt_ovlp),
-        "TP_05_overlap": np.sum(tp_05_ovlp),
-        "TP_05_rel_overlap": np.sum(tp_05_ovlp) / float(np.sum(gt_ovlp)),
-        "avg_gt_cov_overlap": np.mean(gt_covs_ovlp)
-    }
-    per_instance_counts["confusion_matrix"] = {"avFscore": np.mean(fscores)}
-    per_instance_counts["gt_covs"] = gt_covs
-    per_instance_counts["false_split"] = np.sum(false_split)
-    per_instance_counts["false_merge"] = np.sum(false_merge)
-    per_instance_counts["tp"] = []
-    per_instance_counts["fp"] = []
-    per_instance_counts["fn"] = []
-    for i, thresh in enumerate(threshs):
-        per_instance_counts["tp"].append(np.sum(tp[thresh]))
-        per_instance_counts["fp"].append(np.sum(fp[thresh]))
-        per_instance_counts["fn"].append(np.sum(fn[thresh]))
-        per_instance_counts["confusion_matrix"][
-            "th_" + str(thresh).replace(".", "_")] = {
-            "fscore": fscores[i]}
-        if thresh == 0.5:
-            per_instance_counts["confusion_matrix"]["th_0_5"]["AP_TP"] = np.sum(
-                tp[thresh])
-            per_instance_counts["confusion_matrix"]["th_0_5"]["AP_FP"] = np.sum(
-                fp[0.5])
-            per_instance_counts["confusion_matrix"]["th_0_5"]["AP_FN"] = np.sum(
-                fn[0.5])
-            per_instance_counts["confusion_matrix"]["th_0_5"][
-                "false_split"] = np.sum(false_split)
-            per_instance_counts["confusion_matrix"]["th_0_5"][
-                "false_merge"] = np.sum(false_merge)
-            per_instance_counts["confusion_matrix"]["th_0_5"][
-                "avg_tp_skel_coverage"] = np.mean(tp_covs)
-
-    return avS, per_instance_counts
-
-
-# TODO: copy code from ppp
-def average_sets(acc_a, dict_a, acc_b, dict_b):
-    threshs = [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9]
-    acc = np.mean([acc_a, acc_b])
-    fscore = np.mean([dict_a["general"]["avFscore"],
-        dict_b["general"]["avFscore"]])
-    gt_covs = list(dict_a["gt_covs"]) + list(dict_b["gt_covs"])
-    num_gt = dict_a["general"]["Num GT"] + dict_b["general"]["Num GT"]
-    tp_05 = dict_a["general"]["TP_05"] + dict_b["general"]["TP_05"]
-    tp_05_cldice = list(dict_a["general"]["tp_05_cldice"]) + \
-            list(dict_b["general"]["tp_05_cldice"])
-
-    per_instance_counts = {}
-    per_instance_counts["general"] = {
-        "Num GT": num_gt,
-        "Num Pred": dict_a["general"]["Num Pred"] + dict_b["general"]["Num Pred"],
-        "avg_gt_skel_coverage": np.mean([
-            dict_a["general"]["avg_gt_skel_coverage"],
-            dict_b["general"]["avg_gt_skel_coverage"]]),
-        "avg_f1_cov_score": acc,
-        "avFscore": fscore,
-        "FM": dict_a["general"]["FM"] + dict_b["general"]["FM"],
-        "FS": dict_a["general"]["FS"] + dict_b["general"]["FS"],
-        "TP_05": tp_05,
-        "TP_05_rel": tp_05 / float(num_gt),
-        "avg_TP_05_cldice": np.mean(tp_05_cldice)
-    }
-    per_instance_counts["confusion_matrix"] = {"avFscore": fscore}
-    per_instance_counts["gt_covs"] = gt_covs
-    per_instance_counts["false_split"] = dict_a["false_split"] + dict_b["false_split"]
-    per_instance_counts["false_merge"] = dict_a["false_merge"] + dict_b["false_merge"]
-    for i, thresh in enumerate(threshs):
-        cm_a = dict_a["confusion_matrix"]["th_" + str(thresh).replace(".", "_")]
-        cm_b = dict_b["confusion_matrix"]["th_" + str(thresh).replace(".", "_")]
-        per_instance_counts["confusion_matrix"][
-            "th_" + str(thresh).replace(".", "_")] = {
-            "fscore": np.mean([cm_a["fscore"],cm_b["fscore"]])}
-        if thresh == 0.5:
-            per_instance_counts["confusion_matrix"]["th_0_5"]["AP_TP"] = \
-                    cm_a["AP_TP"] + cm_b["AP_TP"]
-            per_instance_counts["confusion_matrix"]["th_0_5"]["AP_FP"] = \
-                    cm_a["AP_FP"] + cm_b["AP_FP"]
-            per_instance_counts["confusion_matrix"]["th_0_5"]["AP_FN"] = \
-                    cm_a["AP_FN"] + cm_b["AP_FN"]
-            per_instance_counts["confusion_matrix"]["th_0_5"][
-                "false_split"] = cm_a["false_split"] + cm_b["false_split"]
-            per_instance_counts["confusion_matrix"]["th_0_5"][
-                "false_merge"] = cm_a["false_merge"] + cm_b["false_merge"]
-            per_instance_counts["confusion_matrix"]["th_0_5"][
-                "avg_tp_skel_coverage"] = np.mean(
-                        [cm_a["avg_tp_skel_coverage"],
-                            cm_b["avg_tp_skel_coverage"]])
-    return acc, per_instance_counts
-
-
+#TODO: option to just pass config (toml) file instead of flags
 def main():
     """main entry point if called from command line
 
@@ -665,7 +418,6 @@ def main():
     flags to select localization criterion, assignment strategy and
     which metrics to compute.
 
-    TODO: option to just pass toml file instead of flags
     """
     parser = argparse.ArgumentParser()
     # input output
@@ -739,10 +491,14 @@ def main():
             default=False,
             help='recompute everything (instead of checking '\
                     'if results are already there)')
+    parser.add_argument('--eval_dim', action='store_true',
+            default=False,
+            help='if flag is set challenging cases like dim'\
+                    ' and overlapping neurons are evaluated')
     parser.add_argument("--debug", help="",
                         action="store_true")
 
-    logger.debug("arguments %s",tuple(sys.argv))
+    logger.debug("arguments %s", tuple(sys.argv))
     args = parser.parse_args()
 
     # shortcut if res_file and gt_file contain folders
@@ -804,16 +560,33 @@ def main():
             args.evaluate_false_labels = True
             args.metric = "general.avg_f1_cov_score"
             args.add_general_metrics = ["avg_gt_skel_coverage",
-                    "avg_tp_skel_coverage",
                     "avg_f1_cov_score",
                     "false_merge",
-                    "false_split"
+                    "false_split",
+                    "avg_gt_cov_dim",
+                    "avg_gt_cov_overlap"
                     ]
             args.summary = ["general.Num GT",
                     "general.Num Pred",
                     "general.avg_f1_cov_score",
                     "confusion_matrix.avFscore",
                     "general.avg_gt_skel_coverage",
+                    "confusion_matrix.th_0_5.AP_TP",
+                    "confusion_matrix.th_0_5.AP_FP",
+                    "confusion_matrix.th_0_5.AP_FN",
+                    "general.FM",
+                    "general.FS",
+                    "general.TP_05",
+                    "general.TP_05_rel",
+                    "general.avg_TP_05_cldice",
+                    "general.GT_dim",
+                    "general.TP_05_dim",
+                    "general.TP_05_rel_dim",
+                    "general.avg_gt_cov_dim",
+                    "general.GT_overlap",
+                    "general.TP_05_overlap",
+                    "general.TP_05_rel_overlap",
+                    "general.avg_gt_cov_overlap",
                     "confusion_matrix.th_0_1.fscore",
                     "confusion_matrix.th_0_2.fscore",
                     "confusion_matrix.th_0_3.fscore",
@@ -823,33 +596,25 @@ def main():
                     "confusion_matrix.th_0_7.fscore",
                     "confusion_matrix.th_0_8.fscore",
                     "confusion_matrix.th_0_9.fscore",
-                    "confusion_matrix.th_0_5.AP_TP", "confusion_matrix.th_0_5.AP_FP",
-                    "confusion_matrix.th_0_5.AP_FN",
-                    "confusion_matrix.th_0_5.false_split",
-                    "confusion_matrix.th_0_5.false_merge",
-                    "confusion_matrix.th_0_5.avg_tp_skel_coverage",
-                    "general.FM",
-                    "general.FS",
-                    "general.TP_05",
-                    "general.TP_05_rel",
-                    "general.avg_TP_05_cldice"
                     ]
             args.visualize_type = "neuron"
             args.fm_thresh = 0.1
             args.fs_thresh = 0.05
+            args.eval_dim = True
 
     samples = []
     metric_dicts = []
-    for res_file, gt_file, partly, out_dir in zip(args.res_file, args.gt_file, partly_list, outdir_list):
+    for res_file, gt_file, partly, out_dir in zip(
+            args.res_file, args.gt_file, partly_list, outdir_list):
         sample_name = os.path.basename(res_file).split(".")[0]
-        print("sample_name: ", sample_name)
-        print("res_file: ", res_file)
-        print("gt_file: ", gt_file)
-        print("partly: ", partly)
-        print("localization: ", args.localization_criterion)
-        print("assignment: ", args.assignment_strategy)
-        print("from scratch: ", args.from_scratch)
-        print("add general metrics: ", args.add_general_metrics)
+        logger.info("sample_name: %s", sample_name)
+        logger.info("res_file: %s", res_file)
+        logger.info("gt_file: %s", gt_file)
+        logger.info("partly: %s", partly)
+        logger.info("localization: %s", args.localization_criterion)
+        logger.info("assignment: %s", args.assignment_strategy)
+        logger.info("from scratch: %s", args.from_scratch)
+        logger.info("add general metrics: %s", args.add_general_metrics)
 
         samples.append(os.path.basename(res_file).split(".")[0])
         metric_dict = evaluate_file(
@@ -873,6 +638,7 @@ def main():
                 fm_thresh=args.fm_thresh,
                 fs_thresh=args.fs_thresh,
                 from_scratch=args.from_scratch,
+                eval_dim=args.eval_dim,
                 debug=args.debug
                 )
         metric_dicts.append(metric_dict)
