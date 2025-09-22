@@ -110,10 +110,12 @@ dependencies = [ # Optional
   "h5py",
   "numpy",
   "scipy",
-  "scikit-image",
+  "scikit-image<0.25",   # <- temp pinning (skeletonize_3d disabled for newer versions)
   "tifffile",
   "toml",
   "zarr",
+  "natsort",
+  "matplotlib" 
 ]
 
 # List additional groups of dependencies here (e.g. development
@@ -125,6 +127,7 @@ dependencies = [ # Optional
 # Similar to `dependencies` above, these must be valid existing
 # projects.
 [project.optional-dependencies] # Optional
+dev = ["pytest", "black", "ruff", "pre-commit"]
 # dev = ["check-manifest"]
 # test = ["coverage"]
 
