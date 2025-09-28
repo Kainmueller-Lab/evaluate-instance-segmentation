@@ -371,14 +371,14 @@ def evaluate_volume(
         # TODO: rename "false_merge" and "false_splits" to sth with many-to-many?
         m2m_matches = None
         if "false_merge" in add_general_metrics:
-            fm, m2m_matches = get_m2m_fm(gt_labels, pred_labels, num_pred_labels,
+            fm, m2m_matches = get_m2m_fm(gt_labels_rel, pred_labels_rel, num_pred_labels,
                     recallMat, fm_thresh)
             metrics.addMetric("general", "FM", fm)
         if "false_split" in add_general_metrics:
             # if fm and fs thresh are different, reset matches, reuse otherwise
             if fm_thresh != fs_thresh:
                 m2m_matches = None
-            fs, _ = get_m2m_fs(gt_labels, pred_labels, recallMat,
+            fs, _ = get_m2m_fs(gt_labels_rel, pred_labels_rel, recallMat,
                     fs_thresh, m2m_matches)
             metrics.addMetric("general", "FS", fs)
 
