@@ -80,7 +80,6 @@ class TestMetrics(unittest.TestCase):
             config["visualize_type"],
             config["overlapping_inst"],
             config["partly"])
-        print(result_dict)
         self.check_results(result_dict.metricsDict, expected)
 
     def test_2d_nuclei(self):

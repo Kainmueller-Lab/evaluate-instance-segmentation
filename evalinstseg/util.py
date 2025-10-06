@@ -12,7 +12,7 @@ import zarr
 logger = logging.getLogger(__name__)
 
 
-def crop(arr, shape):
+def crop(arr, target_shape):
     """center-crop arr to shape
 
     Args
@@ -26,13 +26,13 @@ def crop(arr, shape):
     -------
     cropped array
     """
-
-    target_shape = arr.shape()[:-len(shape)] + shape
+    target_shape = tuple(target_shape)
 
     offset = tuple(
-        (a - b)//2
-        for a, b in zip(arr.shape(), target_shape))
-
+        (a - b) // 2
+        for a, b in zip(arr.shape[-len(target_shape):], target_shape)
+    )
+    
     slices = tuple(
         slice(o, o + s)
         for o, s in zip(offset, target_shape))
@@ -163,6 +163,7 @@ def check_fix_and_unify_ids(
         else:
             pred_labels[:, np.all(gt_labels, axis=0).astype(int)==0] = 0
 
+    # Build binary masks if single-channel but multiple instances
     if (gt_labels.shape[0] == 1 
         and np.max(gt_labels) > 1 
         and np.issubdtype(gt_labels.dtype, np.integer)):
