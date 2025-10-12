@@ -12,7 +12,7 @@ import zarr
 logger = logging.getLogger(__name__)
 
 
-def crop(arr, shape):
+def crop(arr, target_shape):
     """center-crop arr to shape
 
     Args
@@ -26,13 +26,13 @@ def crop(arr, shape):
     -------
     cropped array
     """
-
-    target_shape = arr.shape()[:-len(shape)] + shape
+    target_shape = tuple(target_shape)
 
     offset = tuple(
-        (a - b)//2
-        for a, b in zip(arr.shape(), target_shape))
-
+        (a - b) // 2
+        for a, b in zip(arr.shape[-len(target_shape):], target_shape)
+    )
+    
     slices = tuple(
         slice(o, o + s)
         for o, s in zip(offset, target_shape))
@@ -100,33 +100,8 @@ def remove_empty_channels(labels):
 
     return np.array(tmp_labels)
 
-def expand_single_channel_to_stack(labels):
-    """
-    Expand a single-channel instance mask into a stack of binary masks.
 
-    Parameters
-    ----------
-    labels : np.ndarray
-        Array of shape (1, Z, Y, X) with integer instance IDs.
-
-    Returns
-    -------
-    np.ndarray
-        Array of shape (N, Z, Y, X), one binary mask per instance.
-    """
-    # Remove unnecessary channel dimension
-    vol = labels[0]
-
-    # Determine number of unique instances
-    max_id = np.max(vol)
-    if max_id <= 1:
-        return labels
-    
-    # Create binary masks for each instance
-    masks = [(vol == k) for k in range(1, max_id + 1)]
-    return np.stack(masks, axis=0).astype(labels.dtype)
-
-
+# todo: assert for integers (no floats)
 def check_fix_and_unify_ids(
         gt_labels, pred_labels, remove_small_components, foreground_only,
         dim_insts=[]):
@@ -153,7 +128,7 @@ def check_fix_and_unify_ids(
         pred_labels = filter_components(pred_labels, remove_small_components)
 
     # optional:if foreground_only, remove all predictions within gt background
-    # (rarely useful)
+    # (rarely useful) #! np.any might be more appropriate?
     if foreground_only:
         if (pred_labels.shape[0] == 1 and
             np.all(
@@ -163,15 +138,6 @@ def check_fix_and_unify_ids(
         else:
             pred_labels[:, np.all(gt_labels, axis=0).astype(int)==0] = 0
 
-    if (gt_labels.shape[0] == 1 
-        and np.max(gt_labels) > 1 
-        and np.issubdtype(gt_labels.dtype, np.integer)):
-        gt_labels = expand_single_channel_to_stack(gt_labels)
-
-    if (pred_labels.shape[0] == 1 
-        and np.max(pred_labels) > 1 
-        and np.issubdtype(pred_labels.dtype, np.integer)):
-        pred_labels = expand_single_channel_to_stack(pred_labels)
 
     # after filtering, some channels might be empty
     pred_labels = remove_empty_channels(pred_labels)
