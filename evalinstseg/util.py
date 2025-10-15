@@ -105,7 +105,7 @@ def remove_empty_channels(labels):
 def check_fix_and_unify_ids(
         gt_labels, pred_labels, remove_small_components, foreground_only,
         dim_insts=[]):
-    """unify prediction and gt labelling styles #! Wouldnt it make sense to also unify the representation of the UIDs (f.e, only channel per instamce instead of either single channel or channel per instance)
+    """unify prediction and gt labelling styles 
 
     Note
     ----
@@ -137,8 +137,6 @@ def check_fix_and_unify_ids(
             pred_labels[gt_labels==0] = 0
         else:
             pred_labels[:, np.all(gt_labels, axis=0).astype(int)==0] = 0
-
-
     # after filtering, some channels might be empty
     pred_labels = remove_empty_channels(pred_labels)
     gt_labels = remove_empty_channels(gt_labels)

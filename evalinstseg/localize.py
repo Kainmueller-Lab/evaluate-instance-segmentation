@@ -154,7 +154,7 @@ def get_centerline_overlap_single(
     skeleton = skeletonize_3d(to_skeletonize) > 0
     compare_with = compare_with == compare_label
     if compare_with.ndim == 4:
-        compare_with == np.max(compare_with, axis=0)
+        compare_with = np.max(compare_with, axis=0)
 
     return (np.sum(compare_with[skeleton], dtype=float)
             / np.sum(skeleton, dtype=float))
