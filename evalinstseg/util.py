@@ -101,6 +101,7 @@ def remove_empty_channels(labels):
     return np.array(tmp_labels)
 
 
+# todo: assert for integers (no floats)
 def check_fix_and_unify_ids(
         gt_labels, pred_labels, remove_small_components, foreground_only,
         dim_insts=[]):
@@ -127,7 +128,7 @@ def check_fix_and_unify_ids(
         pred_labels = filter_components(pred_labels, remove_small_components)
 
     # optional:if foreground_only, remove all predictions within gt background
-    # (rarely useful)
+    # (rarely useful) #! np.any might be more appropriate?
     if foreground_only:
         if (pred_labels.shape[0] == 1 and
             np.all(
@@ -136,7 +137,6 @@ def check_fix_and_unify_ids(
             pred_labels[gt_labels==0] = 0
         else:
             pred_labels[:, np.all(gt_labels, axis=0).astype(int)==0] = 0
-
     # after filtering, some channels might be empty
     pred_labels = remove_empty_channels(pred_labels)
     gt_labels = remove_empty_channels(gt_labels)
