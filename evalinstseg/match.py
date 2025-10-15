@@ -76,13 +76,17 @@ def assign_labels(locMat, assignment_strategy, thresh, num_matches):
 
     return tp, tp_pred_ind, tp_gt_ind
 
+def instance_mask(labels, idx):
+    """Returns a instance mask for a given instance index."""
+
+    inst_id = idx + 1
+    return np.any(labels == inst_id, axis=0)
 
 def greedy_many_to_many_matching(gt_labels, pred_labels, locMat, thresh,
         only_one_gt=False, only_one_pred=False):
 
     matches = {}   # list of assigned pred instances for each gt
     locFgMat = locMat[1:, 1:]
-
     q = PriorityQueue()
     gt_skel = {}
     gt_avail = {}
@@ -92,17 +96,19 @@ def greedy_many_to_many_matching(gt_labels, pred_labels, locMat, thresh,
 
     gt_ids, pred_ids = np.nonzero(locFgMat > thresh)
     for gt_id, pred_id in zip(gt_ids, pred_ids):
+
         # initialize clRecall priority queue
         q.put(((-1) * locFgMat[gt_id, pred_id], gt_id, pred_id))
 
     # initialize running instance masks with free/available pixel
     for gt_id in np.unique(gt_ids):
         # save skeletonized gt mask
-        gt_skel[gt_id] = skeletonize_3d(gt_labels[gt_id]) > 0
+        gt_inst_mask = instance_mask(gt_labels, gt_id)
+        gt_skel[gt_id] = skeletonize_3d(gt_inst_mask) > 0
         gt_avail[gt_id] = gt_skel[gt_id].copy()
 
-    for pred_id in np.unique(pred_ids):
-        pred_avail[pred_id] = pred_labels == (pred_id + 1) #todo: also for one inst per channel
+    for pred_id in np.unique(pred_ids): 
+        pred_avail[pred_id] = instance_mask(pred_labels, pred_id) #todo: also for one inst per channel
 
     # iterate through clRecall values in descending order
     while len(q.queue) > 0:
@@ -115,19 +121,19 @@ def greedy_many_to_many_matching(gt_labels, pred_labels, locMat, thresh,
 
         # update running instance masks
         gt_avail[gt_id] = np.logical_and(gt_avail[gt_id],
-                np.logical_not(pred_labels == (pred_id + 1)))
+                np.logical_not(instance_mask(pred_labels, pred_id)))
         pred_avail[pred_id] = np.logical_and(pred_avail[pred_id],
-                np.logical_not(gt_labels[gt_id]))
+                np.logical_not(instance_mask(gt_labels, gt_id)))
 
         # check for other occurences of pred and gt labels in queue
         for o_clr, o_gt_id, o_pred_id in q.queue:
+            denominator_gt = float(np.sum(gt_skel[o_gt_id]))
             if o_gt_id == gt_id:
                 # remove old clRecall entry
                 q.queue.remove((o_clr, o_gt_id, o_pred_id))
                 if not only_one_gt:
                     # add updated clRecall entry
-                    o_clr_new = np.sum(np.logical_and(gt_avail[o_gt_id],
-                            pred_labels == (pred_id + 1))) / float(np.sum(gt_skel[o_gt_id]))
+                    o_clr_new = np.sum(np.logical_and(gt_avail[o_gt_id], instance_mask(pred_labels, o_pred_id))) / denominator_gt
                     q.put(((-1) * o_clr_new, o_gt_id, o_pred_id))
 
             if o_pred_id == pred_id:
@@ -135,8 +141,7 @@ def greedy_many_to_many_matching(gt_labels, pred_labels, locMat, thresh,
                 q.queue.remove((o_clr, o_gt_id, o_pred_id))
                 if not only_one_pred:
                     # add updated clRecall entry
-                    o_clr_new = np.sum(np.logical_and(gt_skel[o_gt_id],
-                        pred_avail[o_pred_id])) / np.sum(gt_skel[o_gt_id])
+                    o_clr_new = np.sum(np.logical_and(gt_skel[o_gt_id], pred_avail[o_pred_id])) / denominator_gt
                     q.put(((-1) * o_clr_new, o_gt_id, o_pred_id))
 
     return matches

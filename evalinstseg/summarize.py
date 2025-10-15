@@ -196,7 +196,6 @@ def average_flylight_score_over_instances(samples_foldn, result):
     return avS, per_instance_counts
 
 
-# TODO: copy code from ppp
 def average_sets(acc_a, dict_a, acc_b, dict_b):
     threshs = [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9]
     acc = np.mean([acc_a, acc_b])
