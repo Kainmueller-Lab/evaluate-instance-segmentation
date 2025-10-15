@@ -12,7 +12,7 @@ import zarr
 logger = logging.getLogger(__name__)
 
 
-def crop(arr, shape):
+def crop(arr, target_shape):
     """center-crop arr to shape
 
     Args
@@ -26,13 +26,13 @@ def crop(arr, shape):
     -------
     cropped array
     """
-
-    target_shape = arr.shape()[:-len(shape)] + shape
+    target_shape = tuple(target_shape)
 
     offset = tuple(
-        (a - b)//2
-        for a, b in zip(arr.shape(), target_shape))
-
+        (a - b) // 2
+        for a, b in zip(arr.shape[-len(target_shape):], target_shape)
+    )
+    
     slices = tuple(
         slice(o, o + s)
         for o, s in zip(offset, target_shape))
@@ -104,7 +104,7 @@ def remove_empty_channels(labels):
 def check_fix_and_unify_ids(
         gt_labels, pred_labels, remove_small_components, foreground_only,
         dim_insts=[]):
-    """unify prediction and gt labelling styles
+    """unify prediction and gt labelling styles 
 
     Note
     ----

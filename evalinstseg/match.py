@@ -82,7 +82,6 @@ def greedy_many_to_many_matching(gt_labels, pred_labels, locMat, thresh,
 
     matches = {}   # list of assigned pred instances for each gt
     locFgMat = locMat[1:, 1:]
-
     q = PriorityQueue()
     gt_skel = {}
     gt_avail = {}
@@ -92,6 +91,7 @@ def greedy_many_to_many_matching(gt_labels, pred_labels, locMat, thresh,
 
     gt_ids, pred_ids = np.nonzero(locFgMat > thresh)
     for gt_id, pred_id in zip(gt_ids, pred_ids):
+
         # initialize clRecall priority queue
         q.put(((-1) * locFgMat[gt_id, pred_id], gt_id, pred_id))
 

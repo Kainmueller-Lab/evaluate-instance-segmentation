@@ -51,7 +51,7 @@ def get_gt_coverage(gt_labels, pred_labels, precMat, recallMat):
 
 # TODO: check consistent use gt_labels_rel and gt_labels!!!
 def get_gt_coverage_dim(dim_insts, gt_labels_rel, pred_labels_rel,
-        num_pred_labels, locMat, recallMat):
+        num_pred_labels, locMat, recallMat, assignment_strategy="greedy"):
     tp_05_dim = 0
     tp_05_rel_dim = 0.0
     gt_covs_dim = []
@@ -89,7 +89,7 @@ def get_gt_coverage_dim(dim_insts, gt_labels_rel, pred_labels_rel,
 
 # TODO: merge with get_gt_coverage_dim to get_gt_coverage_subset
 def get_gt_coverage_overlap(ovlp_inst_ids, gt_labels_rel, pred_labels_rel,
-        num_pred_labels, locMat, recallMat):
+        num_pred_labels, locMat, recallMat, assignment_strategy="greedy"):
     tp_05_ovlp = 0
     tp_05_rel_ovlp = 0.0
     gt_covs_ovlp = []
@@ -125,7 +125,8 @@ def get_gt_coverage_overlap(ovlp_inst_ids, gt_labels_rel, pred_labels_rel,
             tp_05_ovlp, _, _ = assign_labels(
                 locMat_subset, assignment_strategy, 0.5, 1)
         tp_05_rel_ovlp = tp_05_ovlp / float(gt_ovlp)
-    return gt_dim, tp_05_dim, tp_05_rel_dim, gt_covs_dim, avg_cov_dim
+    return gt_ovlp, tp_05_ovlp, tp_05_rel_ovlp, gt_covs_ovlp, avg_cov_ovlp
+
 
 
 def get_m2m_fm(gt_labels, pred_labels, num_pred_labels,

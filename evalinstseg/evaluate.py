@@ -208,7 +208,7 @@ def evaluate_volume(
     if partly:
         evaluate_false_labels = True
 
-    # check sizes and crop if necessary
+    # check sizes and crop if necessary, unify input into per instance arrays
     gt_labels, pred_labels = check_and_fix_sizes(gt_labels, pred_labels, ndim)
     if len(dim_insts) > 0:
         gt_labels_rel, pred_labels_rel, dim_insts_rel = check_fix_and_unify_ids(
@@ -371,21 +371,21 @@ def evaluate_volume(
         # TODO: rename "false_merge" and "false_splits" to sth with many-to-many?
         m2m_matches = None
         if "false_merge" in add_general_metrics:
-            fm, m2m_matches = get_m2m_fm(gt_labels, pred_labels, num_pred_labels,
+            fm, m2m_matches = get_m2m_fm(gt_labels_rel, pred_labels_rel, num_pred_labels,
                     recallMat, fm_thresh)
             metrics.addMetric("general", "FM", fm)
         if "false_split" in add_general_metrics:
             # if fm and fs thresh are different, reset matches, reuse otherwise
             if fm_thresh != fs_thresh:
                 m2m_matches = None
-            fs, _ = get_m2m_fs(gt_labels, pred_labels, recallMat,
+            fs, _ = get_m2m_fs(gt_labels_rel, pred_labels_rel, recallMat,
                     fs_thresh, m2m_matches)
             metrics.addMetric("general", "FS", fs)
 
         if "avg_gt_cov_dim" in add_general_metrics:
             gt_dim, tp_05_dim, tp_05_rel_dim, gt_covs_dim, avg_cov_dim = \
                     get_gt_coverage_dim(dim_insts_rel, gt_labels_rel, pred_labels_rel,
-                            num_pred_labels, locMat, recallMat)
+                            num_pred_labels, locMat, recallMat, assignment_strategy)
             # add to metrics
             metrics.addMetric("general", "GT_dim", gt_dim)
             metrics.addMetric("general", "TP_05_dim", tp_05_dim)
@@ -398,9 +398,9 @@ def evaluate_volume(
             ovlp_inst_ids = np.unique(gt_labels_rel[:, overlap_mask])
 
             gt_ovlp, tp_05_ovlp, tp_05_rel_ovlp, gt_covs_ovlp, avg_cov_ovlp = \
-                    get_gt_coverage_overlap(dim_insts, gt_labels_rel, pred_labels_rel,
-                            num_pred_labels, locMat, recallMat)
-            # add to metrics
+                    get_gt_coverage_overlap(ovlp_inst_ids, gt_labels_rel, pred_labels_rel,
+                            num_pred_labels, locMat, recallMat, assignment_strategy)
+            # add to metricss
             metrics.addMetric("general", "GT_overlap", gt_ovlp)
             metrics.addMetric("general", "TP_05_overlap", tp_05_ovlp)
             metrics.addMetric("general", "TP_05_rel_overlap", tp_05_rel_ovlp)
