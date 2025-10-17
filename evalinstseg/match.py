@@ -102,7 +102,7 @@ def greedy_many_to_many_matching(gt_labels, pred_labels, locMat, thresh,
     # initialize running instance masks with free/available pixel
     for gt_id in np.unique(gt_ids):
         # save skeletonized gt mask
-        gt_inst_mask = instance_mask(gt_labels, gt_id)W
+        gt_inst_mask = instance_mask(gt_labels, gt_id)
         gt_skel[gt_id] = skeletonize_3d(gt_inst_mask) > 0
         gt_avail[gt_id] = gt_skel[gt_id].copy()
 

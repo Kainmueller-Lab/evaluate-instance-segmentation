@@ -483,9 +483,9 @@ def main():
     parser.add_argument('--app', type=str, default=None,
             help='set parameters for specific applications',
             choices=['flylight'])
-    parser.add_argument('--fm_thresh', type=int, default=0.1,
+    parser.add_argument('--fm_thresh', type=float, default=0.1,
             help='min overlap with gt to count as false merger')
-    parser.add_argument('--fs_thresh', type=int, default=0.05,
+    parser.add_argument('--fs_thresh', type=float, default=0.05,
             help='min overlap with gt to count as false split')
     parser.add_argument('--from_scratch', action='store_true',
             default=False,
@@ -666,10 +666,11 @@ def main():
     else:
         acc, acc_all_instances = average_flylight_score_over_instances(
             samples, metrics_full)
-    summarize_metric_dict(metric_dicts, samples, args.summary,
-                          os.path.join(args.summary_out_dir, "summary.csv"),
-                          agg_inst_dict=acc_all_instances
-                          )
+    if args.summary:
+        summarize_metric_dict(metric_dicts, samples, args.summary,
+                            os.path.join(args.summary_out_dir, "summary.csv"),
+                            agg_inst_dict=acc_all_instances
+                            )
 
 
 if __name__ == "__main__":

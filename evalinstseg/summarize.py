@@ -114,8 +114,9 @@ def average_flylight_score_over_instances(samples_foldn, result):
     for s in samples_foldn:
         # TODO: move type conversion to evaluate_file
         c_gen = result[s]["general"]
-        gt_covs += list(np.array(
-            c_gen["gt_skel_coverage"], dtype=np.float32))
+        if "gt_skel_coverage" in c_gen.keys():
+            gt_covs += list(np.array(
+                c_gen["gt_skel_coverage"], dtype=np.float32))
         num_gt.append(c_gen["Num GT"])
         num_pred.append(c_gen["Num Pred"])
         if "FM" in c_gen.keys():
@@ -155,9 +156,9 @@ def average_flylight_score_over_instances(samples_foldn, result):
     per_instance_counts["general"] = {
         "Num GT": np.sum(num_gt),
         "Num Pred": np.sum(num_pred),
-        "avg_gt_skel_coverage": np.mean(gt_covs),
+        "avg_gt_skel_coverage": (np.mean(gt_covs)) if gt_covs else 0.0,
         "avg_f1_cov_score": avS,
-        "avFscore": np.mean(fscores),
+        "avFscore": (np.mean(fscores)) if fscores else 0.0,
         "FM": np.sum(fm),
         "FS": np.sum(fs),
         "TP_05": np.sum(tp_05),
@@ -166,12 +167,12 @@ def average_flylight_score_over_instances(samples_foldn, result):
         "avg_TP_05_cldice": np.mean(tp_05_cldice) if np.sum(tp_05) > 0 else 0.0,
         "GT_dim": np.sum(gt_dim),
         "TP_05_dim": np.sum(tp_05_dim),
-        "TP_05_rel_dim": np.sum(tp_05_dim) / float(np.sum(gt_dim)),
-        "avg_gt_cov_dim": np.mean(gt_covs_dim),
+        "TP_05_rel_dim": (np.sum(tp_05_dim) / float(np.sum(gt_dim))) if gt_dim else 0.0,
+        "avg_gt_cov_dim": (np.mean(gt_covs_dim)) if gt_covs_dim else 0.0,
         "GT_overlap": np.sum(gt_ovlp),
         "TP_05_overlap": np.sum(tp_05_ovlp),
-        "TP_05_rel_overlap": np.sum(tp_05_ovlp) / float(np.sum(gt_ovlp)),
-        "avg_gt_cov_overlap": np.mean(gt_covs_ovlp)
+        "TP_05_rel_overlap": (np.sum(tp_05_ovlp) / float(np.sum(gt_ovlp))) if gt_ovlp else 0.0,
+        "avg_gt_cov_overlap": (np.mean(gt_covs_ovlp)) if gt_covs_ovlp else 0.0
     }
     per_instance_counts["confusion_matrix"] = {"avFscore": np.mean(fscores)}
     per_instance_counts["gt_covs"] = gt_covs
