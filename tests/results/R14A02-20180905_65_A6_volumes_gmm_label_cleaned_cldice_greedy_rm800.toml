@@ -10,6 +10,16 @@ avg_gt_skel_coverage = "0.384124"
 avg_f1_cov_score = "0.36567311651176876"
 FM = 0
 FS = 0
+GT_dim = 3
+TP_05_dim = 0
+TP_05_rel_dim = 0.0
+gt_covs_dim = [ "0.0", "0.0", "0.0",]
+avg_gt_cov_dim = "0.0"
+GT_overlap = 5
+TP_05_overlap = 2
+TP_05_rel_overlap = 0.4
+gt_covs_overlap = [ "0.08819876", "0.9552964", "0.0", "0.64759886", "0.0",]
+avg_gt_cov_overlap = "0.3382188"
 
 [confusion_matrix]
 avAP = "0.11111111111111109"
