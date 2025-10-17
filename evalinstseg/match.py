@@ -47,7 +47,7 @@ def assign_labels(locMat, assignment_strategy, thresh, num_matches):
     # greedy matching by localization criterion
     elif assignment_strategy == "greedy":
         logger.info("start computing greedy assignment for thresh %s", thresh)
-        gt_ind, pred_ind = np.nonzero(locFgMat > thresh) # > 0) if it should be
+        gt_ind, pred_ind = np.nonzero(locFgMat >= thresh) # > 0) if it should be
         # used before iterating through thresholds
         locs = locFgMat[gt_ind, pred_ind]
         # sort loc values in descending order
@@ -91,10 +91,10 @@ def greedy_many_to_many_matching(gt_labels, pred_labels, locMat, thresh,
     gt_skel = {}
     gt_avail = {}
     pred_avail = {}
-    if not np.any(locFgMat > thresh):
+    if not np.any(locFgMat >= thresh):
         return None
 
-    gt_ids, pred_ids = np.nonzero(locFgMat > thresh)
+    gt_ids, pred_ids = np.nonzero(locFgMat >= thresh)
     for gt_id, pred_id in zip(gt_ids, pred_ids):
         # initialize clRecall priority queue
         q.put(((-1) * locFgMat[gt_id, pred_id], gt_id, pred_id))
@@ -176,9 +176,9 @@ def get_false_labels(
     # check if merger also exists when ignoring gt overlapping regions
     if recallMat_wo_overlap is not None:
         loc_mask = np.logical_and(
-            recallMat[1:, 1:] > thresh, recallMat_wo_overlap[1:, 1:] > thresh)
+            recallMat[1:, 1:] >= thresh, recallMat_wo_overlap[1:, 1:] >= thresh)
     else:
-        loc_mask = recallMat[1:, 1:] > thresh
+        loc_mask = recallMat[1:, 1:] >= thresh
     fm_pred_count = np.maximum(0, np.sum(loc_mask, axis=0) - 1)
     fm_count = np.sum(fm_pred_count)
     # we need fm_pred_ind and fm_gt_ind for visualization later on
