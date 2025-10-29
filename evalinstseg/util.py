@@ -186,8 +186,8 @@ def read_file(infn, key, read_dim=False):
         volume = tifffile.imread(infn)
     elif infn.endswith(".zarr"):
         try:
-            f = zarr.open(infn, 'r')
-        except zarr.errors.PathNotFoundError as e:
+            f = zarr.open(infn, mode='r')
+        except (zarr.errors.NodeNotFoundError, FileNotFoundError) as e:
             logger.info("File %s not found!", infn)
             raise e
         volume = np.array(f[key])
