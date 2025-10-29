@@ -250,7 +250,7 @@ def evaluate_volume(
         metrics.addTable(tblname)
 
         # assign prediction to ground truth labels
-        if num_matches > 0 and np.max(locMat) >= th:
+        if num_matches > 0 and np.max(locMat) > th:
             tp, pred_ind, gt_ind = assign_labels(
                 locMat, assignment_strategy, th, num_matches)
         else:
