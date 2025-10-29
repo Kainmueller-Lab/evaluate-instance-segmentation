@@ -27,17 +27,17 @@ def crop(arr, target_shape):
     cropped array
     """
     target_shape = tuple(target_shape)
+    n_spatial = len(target_shape)
 
-    offset = tuple(
-        (a - b) // 2
-        for a, b in zip(arr.shape[-len(target_shape):], target_shape)
-    )
-    
-    slices = tuple(
-        slice(o, o + s)
-        for o, s in zip(offset, target_shape))
+    # Offsets computed over the last axes only
+    spatial_in = arr.shape[-n_spatial:]
+    offset = tuple((a - b) // 2 for a, b in zip(spatial_in, target_shape))
 
-    return arr[slices]
+    # Build slices: preserve leading axes, crop trailing axes
+    leading = (slice(None),) * (arr.ndim - n_spatial)
+    trailing = tuple(slice(o, o + s) for o, s in zip(offset, target_shape))
+
+    return arr[leading + trailing]
 
 
 def check_and_fix_sizes(gt_labels, pred_labels, ndim):
@@ -128,7 +128,7 @@ def check_fix_and_unify_ids(
         pred_labels = filter_components(pred_labels, remove_small_components)
 
     # optional:if foreground_only, remove all predictions within gt background
-    # (rarely useful) #! np.any might be more appropriate?
+    # (rarely useful) 
     if foreground_only:
         if (pred_labels.shape[0] == 1 and
             np.all(
@@ -136,7 +136,8 @@ def check_fix_and_unify_ids(
                  for ps, gs in zip(pred_labels.shape, gt_labels.shape)])):
             pred_labels[gt_labels==0] = 0
         else:
-            pred_labels[:, np.all(gt_labels, axis=0).astype(int)==0] = 0
+            gt_foreground_mask = np.any(gt_labels > 0, axis=0)
+            pred_labels[:, ~gt_foreground_mask] = 0
     # after filtering, some channels might be empty
     pred_labels = remove_empty_channels(pred_labels)
     gt_labels = remove_empty_channels(gt_labels)
@@ -178,6 +179,7 @@ def check_fix_and_unify_ids(
 
 def read_file(infn, key, read_dim=False):
     """read image/volume in hdf, tif and zarr format"""
+    dim_insts = []
     if infn.endswith(".hdf"):
         with h5py.File(infn, 'r') as f:
             volume = np.array(f[key])
@@ -242,3 +244,55 @@ def filter_components(volume, thresh):
     )
     return volume
 
+from itertools import count
+import heapq
+
+from itertools import count
+import heapq
+
+class LazyHeap:
+    """A min-heap with lazy invalidation.
+
+    - push(key, priority): inserts/upserts an item identified by 'key' with given priority.
+    - pop(): returns (priority, key) for the next *live* item; skips stale/invalid entries.
+    - faulty_element(key): marks the current version of 'key' as invalid so queued entries are ignored.
+    - empty(): returns True iff there is no *live* item left (also lazily discards stale head items).
+    """
+    def __init__(self):
+        self._heap = []                 # entries: (priority, tie_breaker, version, key)
+        self._version = {}              # key: latest version int; -1 means invalidated
+        self._tb = count()              # tie-breaker to keep heap stable
+
+    def push(self, key, priority):
+        v = self._version.get(key, 0) + 1
+        self._version[key] = v
+        heapq.heappush(self._heap, (priority, next(self._tb), v, key))
+
+    def faulty_element(self, key):
+        # Mark the current version as invalid; queued entries with that version will be skipped.
+        if key in self._version:
+            self._version[key] = -1
+
+    def discard_stale_head(self):
+        # Drop stale/invalid head entries so empty() can work correctly.
+        while self._heap:
+            prio, _, v, key = self._heap[0]
+            if self._version.get(key) == v:
+                # live head
+                return
+            # if stale/invalid, keep removing and going
+            heapq.heappop(self._heap)
+
+    def pop(self):
+        while self._heap:
+            prio, _, v, key = heapq.heappop(self._heap)
+            if self._version.get(key) == v:
+                # consume live entry
+                self._version.pop(key, None)
+                return prio, key
+            # else stale/invalid, continue loop
+        raise KeyError("pop from empty priority queue")
+
+    def empty(self):
+        self.discard_stale_head()
+        return not self._heap
