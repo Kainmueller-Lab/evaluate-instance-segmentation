@@ -1,5 +1,4 @@
 import logging
-import os
 
 import numpy as np
 from skimage.segmentation import relabel_sequential
@@ -8,10 +7,7 @@ from .localize import (
     get_centerline_overlap_single,
     get_centerline_overlap,
 )
-from .match import (
-    assign_labels,
-    greedy_many_to_many_matching
-)
+from .match import assign_labels, greedy_many_to_many_matching
 
 logger = logging.getLogger(__name__)
 
@@ -25,33 +21,40 @@ def get_gt_coverage(gt_labels, pred_labels, precMat, recallMat):
 
     gt_cov = []
     # if both gt and pred have overlapping instances
-    if (np.any(np.sum(gt_labels, axis=0) != np.max(gt_labels, axis=0)) and
-        np.any(np.sum(pred_labels, axis=0) != np.max(pred_labels, axis=0))):
+    if np.any(np.sum(gt_labels, axis=0) != np.max(gt_labels, axis=0)) and np.any(
+        np.sum(pred_labels, axis=0) != np.max(pred_labels, axis=0)
+    ):
         # recalculate clRecall for each gt and union of assigned
         # predictions, as predicted instances can potentially overlap
         max_gt_ind_unique = np.unique(max_gt_ind[max_gt_ind > 0])
         for gt_i in np.arange(1, num_gt_labels + 1):
             if gt_i in max_gt_ind_unique:
-                pred_union = np.zeros(
-                    pred_labels.shape[1:],
-                    dtype=pred_labels.dtype)
+                pred_union = np.zeros(pred_labels.shape[1:], dtype=pred_labels.dtype)
                 for pred_i in np.arange(num_pred_labels + 1)[max_gt_ind == gt_i]:
                     mask = np.max(pred_labels == pred_i, axis=0)
                     pred_union[mask] = 1
-                gt_cov.append(get_centerline_overlap_single(
-                    gt_labels, pred_union, gt_i, 1))
+                gt_cov.append(
+                    get_centerline_overlap_single(gt_labels, pred_union, gt_i, 1)
+                )
             else:
                 gt_cov.append(0.0)
     else:
         # otherwise use previously computed values
         for i in range(1, recallMat.shape[0]):
-            gt_cov.append(np.sum(recallMat[i, max_gt_ind==i]))
+            gt_cov.append(np.sum(recallMat[i, max_gt_ind == i]))
     return gt_cov
 
 
 # TODO: check consistent use gt_labels_rel and gt_labels!!!
-def get_gt_coverage_dim(dim_insts, gt_labels_rel, pred_labels_rel,
-        num_pred_labels, locMat, recallMat, assignment_strategy="greedy"):
+def get_gt_coverage_dim(
+    dim_insts,
+    gt_labels_rel,
+    pred_labels_rel,
+    num_pred_labels,
+    locMat,
+    recallMat,
+    assignment_strategy="greedy",
+):
     tp_05_dim = 0
     tp_05_rel_dim = 0.0
     gt_covs_dim = []
@@ -65,31 +68,49 @@ def get_gt_coverage_dim(dim_insts, gt_labels_rel, pred_labels_rel,
         offset = 1
         for i in range(gt_labels_subset.shape[0]):
             gt_labels_subset[i], _, _ = relabel_sequential(
-                gt_labels_subset[i].astype(int), offset)
+                gt_labels_subset[i].astype(int), offset
+            )
             offset = np.max(gt_labels_subset[i]) + 1
 
-        precMat_subset = np.zeros((gt_dim+1, num_pred_labels+1), dtype=np.float32)
+        precMat_subset = np.zeros((gt_dim + 1, num_pred_labels + 1), dtype=np.float32)
         precMat_subset = get_centerline_overlap(
-            pred_labels_rel, gt_labels_subset,
-            np.transpose(precMat_subset))
+            pred_labels_rel, gt_labels_subset, np.transpose(precMat_subset)
+        )
         precMat_subset = np.transpose(precMat_subset)
-        recallMat_subset = recallMat[[0,] + dim_insts]
-        locMat_subset = locMat[[0,] + dim_insts]
+        recallMat_subset = recallMat[
+            [
+                0,
+            ]
+            + dim_insts
+        ]
+        locMat_subset = locMat[
+            [
+                0,
+            ]
+            + dim_insts
+        ]
         # compute coverage
-        gt_covs_dim = get_gt_coverage(gt_labels_subset, pred_labels_rel,
-                precMat_subset, recallMat_subset)
+        gt_covs_dim = get_gt_coverage(
+            gt_labels_subset, pred_labels_rel, precMat_subset, recallMat_subset
+        )
         avg_cov_dim = np.mean(gt_covs_dim)
         # compute tp
         if np.max(locMat_subset[1:, 1:]) > 0.5:
-            tp_05_dim, _, _ = assign_labels(
-                locMat_subset, assignment_strategy, 0.5, 1)
+            tp_05_dim, _, _ = assign_labels(locMat_subset, assignment_strategy, 0.5, 1)
         tp_05_rel_dim = tp_05_dim / float(gt_dim)
     return gt_dim, tp_05_dim, tp_05_rel_dim, gt_covs_dim, avg_cov_dim
 
 
 # TODO: merge with get_gt_coverage_dim to get_gt_coverage_subset
-def get_gt_coverage_overlap(ovlp_inst_ids, gt_labels_rel, pred_labels_rel,
-        num_pred_labels, locMat, recallMat, assignment_strategy="greedy"):
+def get_gt_coverage_overlap(
+    ovlp_inst_ids,
+    gt_labels_rel,
+    pred_labels_rel,
+    num_pred_labels,
+    locMat,
+    recallMat,
+    assignment_strategy="greedy",
+):
     tp_05_ovlp = 0
     tp_05_rel_ovlp = 0.0
     gt_covs_ovlp = []
@@ -105,43 +126,55 @@ def get_gt_coverage_overlap(ovlp_inst_ids, gt_labels_rel, pred_labels_rel,
         offset = 1
         for i in range(gt_labels_subset.shape[0]):
             gt_labels_subset[i], _, _ = relabel_sequential(
-                gt_labels_subset[i].astype(int), offset)
+                gt_labels_subset[i].astype(int), offset
+            )
             offset = np.max(gt_labels_subset[i]) + 1
 
-        precMat_subset = np.zeros((gt_ovlp+1, num_pred_labels+1), dtype=np.float32)
+        precMat_subset = np.zeros((gt_ovlp + 1, num_pred_labels + 1), dtype=np.float32)
         precMat_subset = get_centerline_overlap(
-            pred_labels_rel, gt_labels_subset,
-            np.transpose(precMat_subset))
+            pred_labels_rel, gt_labels_subset, np.transpose(precMat_subset)
+        )
         precMat_subset = np.transpose(precMat_subset)
-        recallMat_subset = recallMat[[0,] + list(ovlp_inst_ids)]
-        locMat_subset = locMat[[0,] + list(ovlp_inst_ids)]
+        recallMat_subset = recallMat[
+            [
+                0,
+            ]
+            + list(ovlp_inst_ids)
+        ]
+        locMat_subset = locMat[
+            [
+                0,
+            ]
+            + list(ovlp_inst_ids)
+        ]
         # compute coverage
-        gt_covs_ovlp = get_gt_coverage(gt_labels_subset, pred_labels_rel,
-                precMat_subset, recallMat_subset)
+        gt_covs_ovlp = get_gt_coverage(
+            gt_labels_subset, pred_labels_rel, precMat_subset, recallMat_subset
+        )
         avg_cov_ovlp = np.mean(gt_covs_ovlp)
 
         # compute tp
         if np.max(locMat_subset[1:, 1:]) > 0.5:
-            tp_05_ovlp, _, _ = assign_labels(
-                locMat_subset, assignment_strategy, 0.5, 1)
+            tp_05_ovlp, _, _ = assign_labels(locMat_subset, assignment_strategy, 0.5, 1)
         tp_05_rel_ovlp = tp_05_ovlp / float(gt_ovlp)
     return gt_ovlp, tp_05_ovlp, tp_05_rel_ovlp, gt_covs_ovlp, avg_cov_ovlp
 
 
-
-def get_m2m_fm(gt_labels, pred_labels, num_pred_labels,
-        recallMat, fm_thresh, matches=None):
+def get_m2m_fm(
+    gt_labels, pred_labels, num_pred_labels, recallMat, fm_thresh, matches=None
+):
     # get false merges
     if matches is None:
         # call many-to-many matching based on clRecall
         matches = greedy_many_to_many_matching(
-                gt_labels, pred_labels, recallMat, fm_thresh)
+            gt_labels, pred_labels, recallMat, fm_thresh
+        )
     fm = 0
     if matches is not None:
-        fms = np.zeros(num_pred_labels) # without 0 background
+        fms = np.zeros(num_pred_labels)  # without 0 background
         for k, v in matches.items():
             for cv in v:
-                fms[cv-1] += 1
+                fms[cv - 1] += 1
         fms = np.maximum(fms - 1, np.zeros(num_pred_labels))
         fm = int(np.sum(fms))
     return fm, matches
@@ -151,10 +184,10 @@ def get_m2m_fs(gt_labels, pred_labels, recallMat, fs_thresh, matches=None):
     # get false splits
     if matches is None:
         matches = greedy_many_to_many_matching(
-                gt_labels, pred_labels, recallMat, fs_thresh)
+            gt_labels, pred_labels, recallMat, fs_thresh
+        )
     fs = 0
     if matches is not None:
         for k, v in matches.items():
             fs += max(0, len(v) - 1)
     return fs, matches
-

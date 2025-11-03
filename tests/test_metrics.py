@@ -1,4 +1,3 @@
-import os
 import unittest
 
 import numpy as np
@@ -9,14 +8,25 @@ from evalinstseg import evaluate_volume
 # work in progress
 class TestMetrics(unittest.TestCase):
     # how to name stuff, convex and tubular instead of nuclei and neuron?
-    def set_expected(self, num_gt, num_pred, avg_gt_cov, avg_f1_cov, gt_cov,
-            avAP59, avAP19, avFscore59, avFscore19,
-            tp_0_5, fp_0_5, fn_0_5, fs_0_5, fm_0_5):
+    def set_expected(
+        self,
+        num_gt,
+        num_pred,
+        avg_gt_cov,
+        avg_f1_cov,
+        gt_cov,
+        avAP59,
+        avAP19,
+        avFscore59,
+        avFscore19,
+        tp_0_5,
+        fp_0_5,
+        fn_0_5,
+        fs_0_5,
+        fm_0_5,
+    ):
         # define metric dictionary structure for expected values
-        expected = {
-                "general": {},
-                "confusion_matrix": {"th_0_5":{}}
-                }
+        expected = {"general": {}, "confusion_matrix": {"th_0_5": {}}}
         # set values
         expected["general"]["Num GT"] = num_gt
         expected["general"]["Num Pred"] = num_pred
@@ -35,7 +45,6 @@ class TestMetrics(unittest.TestCase):
 
         return expected
 
-
     def check_results(self, results, expected):
         # check general
         res = results["general"]
@@ -43,10 +52,11 @@ class TestMetrics(unittest.TestCase):
         self.assertEqual(res["Num GT"], exp["Num GT"])
         self.assertEqual(res["Num Pred"], exp["Num Pred"])
         self.assertAlmostEqual(
-            res["avg_gt_skel_coverage"],exp["avg_gt_skel_coverage"], 4)
+            res["avg_gt_skel_coverage"], exp["avg_gt_skel_coverage"], 4
+        )
         self.assertAlmostEqual(res["avg_f1_cov_score"], exp["avg_f1_cov_score"], 4)
         self.assertEqual(len(res["gt_skel_coverage"]), len(exp["gt_skel_coverage"]))
-        for r, e in zip (res["gt_skel_coverage"], exp["gt_skel_coverage"]):
+        for r, e in zip(res["gt_skel_coverage"], exp["gt_skel_coverage"]):
             self.assertAlmostEqual(r, e, 4)
         # check confusion table
         res = results["confusion_matrix"]
@@ -64,13 +74,11 @@ class TestMetrics(unittest.TestCase):
         self.assertEqual(res["false_split"], exp["false_split"])
         self.assertEqual(res["false_merge"], exp["false_merge"])
 
-
     def run_test_case(self, config, gt, pred, expected):
-
         result_dict = evaluate_volume(
             gt,
             pred,
-            config['ndim'],
+            config["ndim"],
             config["outFn"],
             config["localization_criterion"],
             config["assignment_strategy"],
@@ -79,42 +87,41 @@ class TestMetrics(unittest.TestCase):
             config["visualize"],
             config["visualize_type"],
             config["overlapping_inst"],
-            config["partly"])
+            config["partly"],
+        )
         self.check_results(result_dict.metricsDict, expected)
 
     def test_2d_nuclei(self):
         print("todo: test 2d nuclei")
 
-
     def test_3d_nuclei(self):
         print("todo: test 2d nuclei")
-
 
     def test_3d_neuron(self):
         gt = np.zeros((2, 30, 30, 30), dtype=np.int32)
         gt[0, 14:17, 14:17, 5:25] = 1
         gt[1, 14:17, 5:25, 14:17] = 2
 
-        print(np.sum(gt==1), np.sum(gt==2), np.sum(np.sum(gt>0, axis=0) > 1))
+        print(np.sum(gt == 1), np.sum(gt == 2), np.sum(np.sum(gt > 0, axis=0) > 1))
 
         # set parameters
         config = {
-                "ndim": 3,
-                "outFn": None,
-                "localization_criterion": "cldice",
-                "assignment_strategy": "greedy",
-                "add_general_metrics": [
-                    "avg_gt_skel_coverage",
-                    "avg_f1_cov_score",
-                    "false_merge",
-                    "false_split"
-                    ],
-                "evaluate_false_labels": True,
-                "visualize": False,
-                "visualize_type": None,
-                "overlapping_inst": True,
-                "partly": False
-                }
+            "ndim": 3,
+            "outFn": None,
+            "localization_criterion": "cldice",
+            "assignment_strategy": "greedy",
+            "add_general_metrics": [
+                "avg_gt_skel_coverage",
+                "avg_f1_cov_score",
+                "false_merge",
+                "false_split",
+            ],
+            "evaluate_false_labels": True,
+            "visualize": False,
+            "visualize_type": None,
+            "overlapping_inst": True,
+            "partly": False,
+        }
 
         # test case 1: perfect segmentation
         # (1.1) pred + gt overlaps
@@ -122,33 +129,54 @@ class TestMetrics(unittest.TestCase):
         # set_expected: num_gt, num_pred, avg_gt_cov, avg_f1_cov, gt_cov,
         #   avAP59, avAP19, avFscore59, avFscore19,
         #   tp_0_5, fp_0_5, fn_0_5, fs_0_5, fm_0_5):
-        self.run_test_case(config, gt, pred,
-                self.set_expected(2, 2, 1.0, 1.0, [1.0, 1.0],
-                    1.0, 1.0, 1.0, 1.0,
-                    2, 0, 0, 0, 0)
-                )
+        self.run_test_case(
+            config,
+            gt,
+            pred,
+            self.set_expected(
+                2, 2, 1.0, 1.0, [1.0, 1.0], 1.0, 1.0, 1.0, 1.0, 2, 0, 0, 0, 0
+            ),
+        )
 
         # (1.2) gt overlaps
         pred = np.max(pred, axis=0)
         config["overlapping_inst"] = False
         # set expected values
-        gt_cov = np.array([15/18.0, 1.0], dtype=np.float32)
+        gt_cov = np.array([15 / 18.0, 1.0], dtype=np.float32)
         avg_gt_cov = np.mean(gt_cov)
         avg_f1_cov = np.mean([avg_gt_cov, 1.0])
-        self.run_test_case(config, gt, pred,
-                self.set_expected(2, 2, avg_gt_cov, avg_f1_cov,
-                    gt_cov,
-                    0.925, 1.0, 0.95, 1.0,
-                    2, 0, 0, 0, 0)
-                )
+        self.run_test_case(
+            config,
+            gt,
+            pred,
+            self.set_expected(
+                2,
+                2,
+                avg_gt_cov,
+                avg_f1_cov,
+                gt_cov,
+                0.925,
+                1.0,
+                0.95,
+                1.0,
+                2,
+                0,
+                0,
+                0,
+                0,
+            ),
+        )
 
         # (1.3) no overlaps
         gt = np.max(gt, axis=0)
-        self.run_test_case(config, gt, pred,
-                self.set_expected(2, 2, 1.0, 1.0, [1.0, 1.0],
-                    1.0, 1.0, 1.0, 1.0,
-                    2, 0, 0, 0, 0)
-                )
+        self.run_test_case(
+            config,
+            gt,
+            pred,
+            self.set_expected(
+                2, 2, 1.0, 1.0, [1.0, 1.0], 1.0, 1.0, 1.0, 1.0, 2, 0, 0, 0, 0
+            ),
+        )
 
         # test case 2: erroneous segmentation
         gt = np.zeros((3, 30, 30, 30), dtype=np.int32)
@@ -167,21 +195,73 @@ class TestMetrics(unittest.TestCase):
         # (2.1) pred + gt overlaps
         config["overlapping_inst"] = False
         # gt_cov = np.array([1.0, 14/18.0, 8/18.0], dtype=np.float32)
-        gt_cov = np.array([1.0, 0.0, 8/18.0], dtype=np.float32)
+        gt_cov = np.array([1.0, 0.0, 8 / 18.0], dtype=np.float32)
         avg_gt_cov = np.mean(gt_cov)
-        ap19 = np.mean([4/15.0,] * 4 + [1/15.0,] * 3 + [0.0, 0.0])
-        ap59 = np.mean([1/15.0,] * 6 + [0.0,] * 4)
-        fscore19 = np.mean([0.5,] * 4 + [0.25,] * 3 + [0.0, 0.0])
-        fscore59 = np.mean([0.25,] * 6 + [0.0,] * 4)
+        ap19 = np.mean(
+            [
+                4 / 15.0,
+            ]
+            * 4
+            + [
+                1 / 15.0,
+            ]
+            * 3
+            + [0.0, 0.0]
+        )
+        ap59 = np.mean(
+            [
+                1 / 15.0,
+            ]
+            * 6
+            + [
+                0.0,
+            ]
+            * 4
+        )
+        fscore19 = np.mean(
+            [
+                0.5,
+            ]
+            * 4
+            + [
+                0.25,
+            ]
+            * 3
+            + [0.0, 0.0]
+        )
+        fscore59 = np.mean(
+            [
+                0.25,
+            ]
+            * 6
+            + [
+                0.0,
+            ]
+            * 4
+        )
         avg_f1_cov = np.mean([avg_gt_cov, fscore19])
-        self.run_test_case(config, gt, pred,
-                self.set_expected(3, 5, avg_gt_cov, avg_f1_cov,
-                    gt_cov,
-                    ap59, ap19, fscore59, fscore19,
-                    1, 4, 2, 2, 1)
-                )
+        self.run_test_case(
+            config,
+            gt,
+            pred,
+            self.set_expected(
+                3,
+                5,
+                avg_gt_cov,
+                avg_f1_cov,
+                gt_cov,
+                ap59,
+                ap19,
+                fscore59,
+                fscore19,
+                1,
+                4,
+                2,
+                2,
+                1,
+            ),
+        )
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     unittest.main()
-

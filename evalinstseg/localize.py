@@ -1,5 +1,4 @@
 import logging
-import os
 
 import numpy as np
 from scipy.optimize import linear_sum_assignment
@@ -12,8 +11,8 @@ logger = logging.getLogger(__name__)
 # TODO: define own functions per localization criterion
 # TODO: not use num_*_labels as parameters here?
 def compute_localization_criterion(
-        pred_labels, gt_labels, num_pred_labels, num_gt_labels,
-        localization_criterion):
+    pred_labels, gt_labels, num_pred_labels, num_gt_labels, localization_criterion
+):
     """computes the localization part of the metric
     For each pair of labels in the prediction and gt,
     how much are they co-localized, based on the chosen criterion?
@@ -21,42 +20,46 @@ def compute_localization_criterion(
     logger.debug("evaluate localization criterion for all gt and pred label pairs")
 
     # create matrices for pixelwise overlap measures
-    locMat = np.zeros((num_gt_labels+1, num_pred_labels+1), dtype=np.float32)
-    recallMat = np.zeros((num_gt_labels+1, num_pred_labels+1), dtype=np.float32)
-    precMat = np.zeros((num_gt_labels+1, num_pred_labels+1), dtype=np.float32)
+    locMat = np.zeros((num_gt_labels + 1, num_pred_labels + 1), dtype=np.float32)
+    recallMat = np.zeros((num_gt_labels + 1, num_pred_labels + 1), dtype=np.float32)
+    precMat = np.zeros((num_gt_labels + 1, num_pred_labels + 1), dtype=np.float32)
     recallMat_wo_overlap = None
 
     # intersection over union
     if localization_criterion == "iou":
         logger.debug("compute iou")
-        pred_tile = [1, ] * pred_labels.ndim
+        pred_tile = [
+            1,
+        ] * pred_labels.ndim
         pred_tile[0] = gt_labels.shape[0]
-        gt_tile = [1, ] * gt_labels.ndim
+        gt_tile = [
+            1,
+        ] * gt_labels.ndim
         gt_tile[1] = pred_labels.shape[0]
         pred_tiled = np.tile(pred_labels, pred_tile).flatten()
         gt_tiled = np.tile(gt_labels, gt_tile).flatten()
         mask = np.logical_or(pred_tiled > 0, gt_tiled > 0)
         overlay = np.array([pred_tiled[mask], gt_tiled[mask]])
         overlay_labels, overlay_labels_counts = np.unique(
-            overlay, return_counts=True, axis=1)
+            overlay, return_counts=True, axis=1
+        )
         overlay_labels = np.transpose(overlay_labels)
 
         # get gt cell ids and the size of the corresponding cell
         gt_labels_list, gt_counts = np.unique(gt_labels, return_counts=True)
         gt_labels_count_dict = {}
         logger.debug("%s %s", gt_labels_list, gt_counts)
-        for (l,c) in zip(gt_labels_list, gt_counts):
+        for l, c in zip(gt_labels_list, gt_counts):
             gt_labels_count_dict[l] = c
 
         # get pred cell ids
-        pred_labels_list, pred_counts = np.unique(
-            pred_labels, return_counts=True)
+        pred_labels_list, pred_counts = np.unique(pred_labels, return_counts=True)
         logger.debug("%s %s", pred_labels_list, pred_counts)
         pred_labels_count_dict = {}
-        for (l,c) in zip(pred_labels_list, pred_counts):
+        for l, c in zip(pred_labels_list, pred_counts):
             pred_labels_count_dict[l] = c
 
-        for (u,v), c in zip(overlay_labels, overlay_labels_counts):
+        for (u, v), c in zip(overlay_labels, overlay_labels_counts):
             iou = c / (gt_labels_count_dict[v] + pred_labels_count_dict[u] - c)
 
             locMat[v, u] = iou
@@ -67,16 +70,13 @@ def compute_localization_criterion(
     elif localization_criterion == "cldice":
         logger.debug("compute cldice")
         # todo: transpose precMat
-        precMat = get_centerline_overlap(
-            pred_labels, gt_labels,
-            np.transpose(precMat))
+        precMat = get_centerline_overlap(pred_labels, gt_labels, np.transpose(precMat))
         precMat = np.transpose(precMat)
-        recallMat = get_centerline_overlap(
-            gt_labels, pred_labels,
-            recallMat)
+        recallMat = get_centerline_overlap(gt_labels, pred_labels, recallMat)
 
-        if (np.any(np.sum(gt_labels, axis=0) != np.max(gt_labels, axis=0)) or
-            np.any(np.sum(pred_labels, axis=0) != np.max(pred_labels, axis=0))):
+        if np.any(np.sum(gt_labels, axis=0) != np.max(gt_labels, axis=0)) or np.any(
+            np.sum(pred_labels, axis=0) != np.max(pred_labels, axis=0)
+        ):
             # get recallMat without overlapping gt labels for false merge
             # calculation later on
             gt_wo_overlap = gt_labels.copy()
@@ -87,12 +87,12 @@ def compute_localization_criterion(
             pred_wo_overlap[:, mask] = 0
 
             recallMat_wo_overlap = get_centerline_overlap(
-                gt_wo_overlap, pred_wo_overlap,
-                np.zeros_like(recallMat))
+                gt_wo_overlap, pred_wo_overlap, np.zeros_like(recallMat)
+            )
         err = np.geterr()
-        np.seterr(invalid='ignore')
+        np.seterr(invalid="ignore")
         locMat = np.nan_to_num(2 * precMat * recallMat / (precMat + recallMat))
-        np.seterr(invalid=err['invalid'])
+        np.seterr(invalid=err["invalid"])
     else:
         raise NotImplementedError
     return locMat, recallMat, precMat, recallMat_wo_overlap
@@ -123,12 +123,12 @@ def get_centerline_overlap(to_skeletonize, compare_with, match):
         skeleton_size = np.sum(skeleton)
 
         compare_labels, compare_labels_cnt = np.unique(
-            compare_with[:, skeleton], return_counts=True)
+            compare_with[:, skeleton], return_counts=True
+        )
 
         # remember to correct for bg label
         if 0 in compare_labels:
-            compare_fg, compare_fg_cnt = np.unique(
-                fg[skeleton], return_counts=True)
+            compare_fg, compare_fg_cnt = np.unique(fg[skeleton], return_counts=True)
             if 0 in compare_fg:
                 assert compare_labels[0] == 0 and compare_fg[0] == 0
                 compare_labels_cnt[0] = compare_fg_cnt[0]
@@ -143,7 +143,8 @@ def get_centerline_overlap(to_skeletonize, compare_with, match):
 
 
 def get_centerline_overlap_single(
-        to_skeletonize, compare_with, skeletonize_label, compare_label):
+    to_skeletonize, compare_with, skeletonize_label, compare_label
+):
     """skeletonizes `to_skeletonize` and checks how much overlap
     `compare_with` has with the skeletons, for a single pair of labels)
     """
@@ -156,6 +157,4 @@ def get_centerline_overlap_single(
     if compare_with.ndim == 4:
         compare_with = np.max(compare_with, axis=0)
 
-    return (np.sum(compare_with[skeleton], dtype=float)
-            / np.sum(skeleton, dtype=float))
-
+    return np.sum(compare_with[skeleton], dtype=float) / np.sum(skeleton, dtype=float)

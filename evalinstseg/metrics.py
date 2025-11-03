@@ -1,5 +1,4 @@
 import logging
-import os
 import toml
 
 logger = logging.getLogger(__name__)
@@ -16,6 +15,7 @@ class Metrics:
     fn: str/Path
         filename without toml extension. results will be written to this file.
     """
+
     def __init__(self, fn):
         self.metricsDict = {}
         self.fn = fn
@@ -23,7 +23,7 @@ class Metrics:
     def save(self):
         """dump results to toml file."""
         logger.info("saving %s", self.fn)
-        with open(self.fn+".toml", 'w') as tomlFl:
+        with open(self.fn + ".toml", "w") as tomlFl:
             toml.dump(self.metricsDict, tomlFl)
 
     def addTable(self, name, dct=None):
@@ -57,7 +57,6 @@ class Metrics:
             return self.getTable(name, dct=dct[levels[0]])
 
     def addMetric(self, table_name, name, value):
-        """add result for metric `name` to sub-table `table_name` """
+        """add result for metric `name` to sub-table `table_name`"""
         tbl = self.getTable(table_name)
         tbl[name] = value
-
