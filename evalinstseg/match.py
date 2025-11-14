@@ -6,6 +6,7 @@ from scipy.optimize import linear_sum_assignment
 from skimage.morphology import skeletonize_3d
 from skimage.segmentation import relabel_sequential
 from queue import PriorityQueue
+from evalinstseg.util import LazyHeap
 
 logger = logging.getLogger(__name__)
 
@@ -30,12 +31,12 @@ def assign_labels(locMat, assignment_strategy, thresh, num_matches):
 
     # optimal hungarian matching
     if assignment_strategy == "hungarian":
-        costs = -(locFgMat >= thresh).astype(float) - locFgMat / (2 * num_matches)
+        costs = -(locFgMat > thresh).astype(float) - locFgMat / (2 * num_matches)
         logger.info("start computing lin sum assign for thresh %s",
                     thresh)
         gt_ind, pred_ind = linear_sum_assignment(costs)
         assert num_matches == len(gt_ind) == len(pred_ind)
-        match_ok = locFgMat[gt_ind, pred_ind] >= thresh
+        match_ok = locFgMat[gt_ind, pred_ind] > thresh
         tp = np.count_nonzero(match_ok)
 
         # get true positive indices
@@ -47,14 +48,14 @@ def assign_labels(locMat, assignment_strategy, thresh, num_matches):
     # greedy matching by localization criterion
     elif assignment_strategy == "greedy":
         logger.info("start computing greedy assignment for thresh %s", thresh)
-        gt_ind, pred_ind = np.nonzero(locFgMat >= thresh) # > 0) if it should be
+        gt_ind, pred_ind = np.nonzero(locFgMat > thresh) # > 0) if it should be
         # used before iterating through thresholds
         locs = locFgMat[gt_ind, pred_ind]
         # sort loc values in descending order
-        sort = np.flip(np.argsort(locs))
-        gt_ind = gt_ind[sort]
-        pred_ind = pred_ind[sort]
-        locs = locs[sort]
+        order = np.lexsort((pred_ind, gt_ind, -locs))
+        gt_ind  = gt_ind[order]
+        pred_ind = pred_ind[order]
+        locs    = locs[order]
 
         # assign greedy by loc score
         for gt_idx, pred_idx, loc in zip(gt_ind, pred_ind, locs):
@@ -87,18 +88,21 @@ def greedy_many_to_many_matching(gt_labels, pred_labels, locMat, thresh,
 
     matches = {}   # list of assigned pred instances for each gt
     locFgMat = locMat[1:, 1:]
-    q = PriorityQueue()
-    gt_skel = {}
-    gt_avail = {}
+    pq = LazyHeap()
+
     pred_avail = {}
-    if not np.any(locFgMat >= thresh):
+    
+    if not np.any(locFgMat > thresh):
         return None
 
-    gt_ids, pred_ids = np.nonzero(locFgMat >= thresh)
+    gt_ids, pred_ids = np.nonzero(locFgMat > thresh)
     for gt_id, pred_id in zip(gt_ids, pred_ids):
         # initialize clRecall priority queue
-        q.put(((-1) * locFgMat[gt_id, pred_id], gt_id, pred_id))
+        priority = (-1) * locFgMat[gt_id, pred_id]
+        pq.push((gt_id, pred_id), priority)
 
+    gt_skel = {}
+    gt_avail = {}
     # initialize running instance masks with free/available pixel
     for gt_id in np.unique(gt_ids):
         # save skeletonized gt mask
@@ -110,8 +114,11 @@ def greedy_many_to_many_matching(gt_labels, pred_labels, locMat, thresh,
         pred_avail[pred_id] = instance_mask(pred_labels, pred_id) #todo: also for one inst per channel
 
     # iterate through clRecall values in descending order
-    while len(q.queue) > 0:
-        clr, gt_id, pred_id = q.get()
+    while not pq.empty():
+        try:
+            _, (gt_id, pred_id) = pq.pop()   
+        except KeyError:
+            break
         # save as match
         if gt_id not in matches:
             matches[gt_id] = [pred_id]
@@ -125,24 +132,34 @@ def greedy_many_to_many_matching(gt_labels, pred_labels, locMat, thresh,
                 np.logical_not(instance_mask(gt_labels, gt_id)))
 
         # check for other occurences of pred and gt labels in queue
-        for o_clr, o_gt_id, o_pred_id in q.queue:
-            denominator_gt = float(np.sum(gt_skel[o_gt_id]))
-            if o_gt_id == gt_id:
-                # remove old clRecall entry
-                q.queue.remove((o_clr, o_gt_id, o_pred_id))
-                if not only_one_gt:
-                    # add updated clRecall entry
-                    o_clr_new = np.sum(np.logical_and(gt_avail[o_gt_id], instance_mask(pred_labels, o_pred_id))) / denominator_gt
-                    q.put(((-1) * o_clr_new, o_gt_id, o_pred_id))
+        # Update their clDice values and reinsert or remove from queue
+        cand_pred_ids = np.nonzero(locFgMat[gt_id, :] > thresh)[0]
+        denominator_gt = float(np.sum(gt_skel[gt_id])) or 1.0
+        for o_pred_id in cand_pred_ids:
+            if not only_one_gt:
+                inter = np.logical_and(gt_avail[gt_id], instance_mask(pred_labels, o_pred_id))
+                new_clr = np.sum(inter) / denominator_gt
+                if new_clr > thresh:
+                    pq.push((gt_id, o_pred_id), -new_clr)
+                else:
+                    pq.faulty_element((gt_id, o_pred_id))
+            else:
+                # If ONE-TO-MANY: Invalidate all other pairs for this gt_id
+                pq.faulty_element((gt_id, o_pred_id))
 
-            if o_pred_id == pred_id:
-                # remove old clRecall entry
-                q.queue.remove((o_clr, o_gt_id, o_pred_id))
-                if not only_one_pred:
-                    # add updated clRecall entry
-                    o_clr_new = np.sum(np.logical_and(gt_skel[o_gt_id], pred_avail[o_pred_id])) / denominator_gt
-                    q.put(((-1) * o_clr_new, o_gt_id, o_pred_id))
-
+        cand_gt_ids = np.nonzero(locFgMat[:, pred_id] > thresh)[0]
+        for o_gt_id in cand_gt_ids:
+            if not only_one_pred:
+                denom = float(np.sum(gt_skel[o_gt_id])) or 1.0
+                inter = np.logical_and(gt_skel[o_gt_id], pred_avail[pred_id])
+                new_clr = np.sum(inter) / denom
+                if new_clr > thresh:
+                    pq.push((o_gt_id, pred_id), -new_clr)
+                else:
+                    pq.faulty_element((o_gt_id, pred_id))
+            else:
+                # If ONE-TO-MANY: Invalidate all other pairs for this pred_id
+                pq.faulty_element((o_gt_id, pred_id))
     return matches
 
 
@@ -176,9 +193,9 @@ def get_false_labels(
     # check if merger also exists when ignoring gt overlapping regions
     if recallMat_wo_overlap is not None:
         loc_mask = np.logical_and(
-            recallMat[1:, 1:] >= thresh, recallMat_wo_overlap[1:, 1:] >= thresh)
+            recallMat[1:, 1:] > thresh, recallMat_wo_overlap[1:, 1:] > thresh)
     else:
-        loc_mask = recallMat[1:, 1:] >= thresh
+        loc_mask = recallMat[1:, 1:] > thresh
     fm_pred_count = np.maximum(0, np.sum(loc_mask, axis=0) - 1)
     fm_count = np.sum(fm_pred_count)
     # we need fm_pred_ind and fm_gt_ind for visualization later on
