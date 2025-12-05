@@ -3,8 +3,6 @@ import os
 
 import h5py
 import numpy as np
-from scipy.optimize import linear_sum_assignment
-from skimage.morphology import skeletonize_3d
 from skimage.segmentation import relabel_sequential
 import tifffile
 import zarr
