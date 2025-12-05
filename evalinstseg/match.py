@@ -3,7 +3,7 @@ import os
 
 import numpy as np
 from scipy.optimize import linear_sum_assignment
-from skimage.morphology import skeletonize
+from skimage.morphology import skeletonize_3d
 from skimage.segmentation import relabel_sequential
 from queue import PriorityQueue
 from evalinstseg.util import LazyHeap
@@ -107,7 +107,7 @@ def greedy_many_to_many_matching(gt_labels, pred_labels, locMat, thresh,
     for gt_id in np.unique(gt_ids):
         # save skeletonized gt mask
         gt_inst_mask = instance_mask(gt_labels, gt_id)
-        gt_skel[gt_id] = skeletonize(gt_inst_mask) > 0
+        gt_skel[gt_id] = skeletonize_3d(gt_inst_mask) > 0
         gt_avail[gt_id] = gt_skel[gt_id].copy()
 
     for pred_id in np.unique(pred_ids): 

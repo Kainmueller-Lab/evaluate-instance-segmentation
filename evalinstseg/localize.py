@@ -2,7 +2,7 @@ import logging
 
 import numpy as np
 from scipy.optimize import linear_sum_assignment
-from skimage.morphology import skeletonize
+from skimage.morphology import skeletonize_3d
 from skimage.segmentation import relabel_sequential
 
 logger = logging.getLogger(__name__)
@@ -119,7 +119,7 @@ def get_centerline_overlap(to_skeletonize, compare_with, match):
         # remove channel dim via max projection
         mask = np.max(mask, axis=0)
         # skeletonize
-        skeleton = skeletonize(mask.astype(np.uint8)) > 0
+        skeleton = skeletonize_3d(mask.astype(np.uint8)) > 0
         skeleton_size = np.sum(skeleton)
 
         compare_labels, compare_labels_cnt = np.unique(
@@ -151,8 +151,8 @@ def get_centerline_overlap_single(
     to_skeletonize = to_skeletonize == skeletonize_label
     if to_skeletonize.ndim == 4:
         to_skeletonize = np.max(to_skeletonize, axis=0)
-    # note: skeletonize also works for 2d images
-    skeleton = skeletonize(to_skeletonize) > 0
+    # note: skeletonize_3d also works for 2d images
+    skeleton = skeletonize_3d(to_skeletonize) > 0
     compare_with = compare_with == compare_label
     if compare_with.ndim == 4:
         compare_with = np.max(compare_with, axis=0)
