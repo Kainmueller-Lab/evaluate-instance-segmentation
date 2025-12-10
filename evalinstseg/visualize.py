@@ -83,61 +83,90 @@ def paint_boundary(labels_rel, label, target):
 def visualize_nuclei(
         gt_labels_rel, pred_labels_rel, locMat, gt_ind, pred_ind, th, outFn):
     """visualize nuclei (blob-like) segmentation results"""
-    vis_tp = np.zeros_like(gt_labels_rel, dtype=np.float32)
-    vis_fp = np.zeros_like(gt_labels_rel, dtype=np.float32)
-    vis_fn = np.zeros_like(gt_labels_rel, dtype=np.float32)
-    vis_tp_seg = np.zeros_like(gt_labels_rel, dtype=np.float32)
-    vis_tp_seg2 = np.zeros_like(gt_labels_rel, dtype=np.float32)
-    vis_fp_seg = np.zeros_like(gt_labels_rel, dtype=np.float32)
-    vis_fn_seg = np.zeros_like(gt_labels_rel, dtype=np.float32)
-    vis_fp_seg_bnd = np.zeros_like(gt_labels_rel, dtype=np.float32)
+    # GT-basiert
+    vis_tp       = np.zeros_like(gt_labels_rel, dtype=np.float32)
+    vis_fn       = np.zeros_like(gt_labels_rel, dtype=np.float32)
+    vis_tp_seg   = np.zeros_like(gt_labels_rel, dtype=np.float32)
+    vis_fn_seg   = np.zeros_like(gt_labels_rel, dtype=np.float32)
     vis_fn_seg_bnd = np.zeros_like(gt_labels_rel, dtype=np.float32)
 
-    cntrs_gt = scipy.ndimage.measurements.center_of_mass(
+    # Pred-basiert  
+    vis_fp        = np.zeros_like(pred_labels_rel, dtype=np.float32)
+    vis_tp_seg2   = np.zeros_like(pred_labels_rel, dtype=np.float32)
+    vis_fp_seg    = np.zeros_like(pred_labels_rel, dtype=np.float32)
+    vis_fp_seg_bnd = np.zeros_like(pred_labels_rel, dtype=np.float32)
+
+    # determine number of labels 
+    num_gt_labels = int(np.max(gt_labels_rel))
+    num_pred_labels = int(np.max(pred_labels_rel))
+
+    labels_gt = list(range(1, num_gt_labels + 1))
+    labels_pred = list(range(1, num_pred_labels + 1))
+
+    cntrs_gt = scipy.ndimage.center_of_mass(
         gt_labels_rel > 0,
-        gt_labels_rel, sorted(list(np.unique(gt_labels_rel)))[1:])
-    cntrs_pred = scipy.ndimage.measurements.center_of_mass(
+        gt_labels_rel,
+        labels_gt
+    )
+    cntrs_pred = scipy.ndimage.center_of_mass(
         pred_labels_rel > 0,
-        pred_labels_rel, sorted(list(np.unique(pred_labels_rel)))[1:])
-    num_gt_labels = np.max(gt_labels_rel)
-    num_pred_labels = np.max(pred_labels_rel)
+        pred_labels_rel,
+        labels_pred
+)
 
     sz = 1
-    for gti, pi, in zip(gt_ind, pred_ind):
+    for gti, pi in zip(gt_ind, pred_ind):
         if locMat[gti, pi] < th:
-            vis_fn_seg[gt_labels_rel == gti+1] = 1
-            paint_boundary(gt_labels_rel, gti+1, vis_fn_seg_bnd)
-            vis_fp_seg[pred_labels_rel == pi+1] = 1
-            paint_boundary(pred_labels_rel, pi+1, vis_fp_seg_bnd)
-            cntr = cntrs_gt[gti]
-            vis_fn[(int(c) for c in cntr)] = 1
-            cntr = cntrs_pred[pi]
-            vis_fp[(int(c) for c in cntr)] = 1
+            vis_fn_seg[gt_labels_rel == gti] = 1
+            paint_boundary(gt_labels_rel, gti, vis_fn_seg_bnd)
+            vis_fp_seg[pred_labels_rel == pi] = 1
+            paint_boundary(pred_labels_rel, pi, vis_fp_seg_bnd)
+            cntr = cntrs_gt[gti-1]
+            idx = tuple(int(round(c)) for c in cntr)
+            vis_fn[idx] = 1
+
+            cntr = cntrs_pred[pi-1]
+            idx = tuple(int(round(c)) for c in cntr)
+            vis_fp[idx] = 1
         else:
-            vis_tp_seg[gt_labels_rel == gti+1] = 1
-            cntr = cntrs_gt[gti]
-            vis_tp[(int(c) for c in cntr)] = 1
-            vis_tp_seg2[pred_labels_rel == pi+1] = 1
+            vis_tp_seg[gt_labels_rel == gti] = 1
+            cntr = cntrs_gt[gti - 1]
+            idx = tuple(int(round(c)) for c in cntr)
+            vis_tp[idx] = 1
+            vis_tp_seg2[pred_labels_rel == pi] = 1
+
     vis_tp = scipy.ndimage.gaussian_filter(vis_tp, sz, truncate=sz)
-    for gti in range(num_gt_labels):
-        if gti in gt_ind:
+    for label in range(1, num_gt_labels + 1):
+        if label in gt_ind:
             continue
-        vis_fn_seg[gt_labels_rel == gti+1] = 1
-        paint_boundary(gt_labels_rel, gti+1, vis_fn_seg_bnd)
-        cntr = cntrs_gt[gti]
-        vis_fn[(int(c) for c in cntr)] = 1
+        vis_fn_seg[gt_labels_rel == label] = 1
+        paint_boundary(gt_labels_rel, label, vis_fn_seg_bnd)
+        cntr = cntrs_gt[label - 1]
+        idx = tuple(int(round(c)) for c in cntr)
+        vis_fn[idx] = 1
     vis_fn = scipy.ndimage.gaussian_filter(vis_fn, sz, truncate=sz)
-    for pi in range(num_pred_labels):
-        if pi in pred_ind:
+    for label in range(1, num_pred_labels + 1):
+        if label in pred_ind:
             continue
-        vis_fp_seg[pred_labels_rel == pi+1] = 1
-        paint_boundary(pred_labels_rel, pi+1, vis_fp_seg_bnd)
-        cntr = cntrs_pred[pi]
-        vis_fp[(int(c) for c in cntr)] = 1
+        vis_fp_seg[pred_labels_rel == label] = 1
+        paint_boundary(pred_labels_rel, label, vis_fp_seg_bnd)
+        cntr = cntrs_pred[label - 1]
+        idx = tuple(int(round(c)) for c in cntr)
+        vis_fp[idx] = 1
     vis_fp = scipy.ndimage.gaussian_filter(vis_fp, sz, truncate=sz)
-    vis_tp = vis_tp/np.max(vis_tp)
-    vis_fp = vis_fp/np.max(vis_fp)
-    vis_fn = vis_fn/np.max(vis_fn)
+
+    # Division by 0 guard
+    max_tp = np.max(vis_tp)
+    if max_tp > 0:
+        vis_tp = vis_tp / max_tp
+
+    max_fp = np.max(vis_fp)
+    if max_fp > 0:
+        vis_fp = vis_fp / max_fp
+
+    max_fn = np.max(vis_fn)
+    if max_fn > 0:
+        vis_fn = vis_fn / max_fn
     with h5py.File(outFn + "_vis.hdf", 'w') as fi:
         fi.create_dataset('volumes/vis_tp', data=vis_tp, compression='gzip')
         fi.create_dataset('volumes/vis_fp', data=vis_fp, compression='gzip')
@@ -174,6 +203,14 @@ def visualize_neurons(
         pred = np.max(pred_labels_rel, axis=0)
     else:
         pred = pred_labels_rel
+    
+    # unify shapes for vis if only z differs (instance stack)
+    if gt.ndim == 3 and pred.ndim == 3 and gt.shape[1:] == pred.shape[1:] and gt.shape[0] != pred.shape[0]:
+        gt   = np.max(gt, axis=0)   
+        pred = np.max(pred, axis=0)
+    assert gt.shape[1:] == pred.shape[1:], f"Spatial shape mismatch: gt {gt.shape}, pred {pred.shape}"
+
+
     num_gt = np.max(gt_labels_rel)
     num_pred = np.max(pred_labels_rel)
     dst = np.zeros_like(gt, dtype=np.uint8)
@@ -184,7 +221,13 @@ def visualize_neurons(
     vis = np.zeros_like(dst)
     for i in range(1, num_gt + 1):
         vis[gt == i] = rgb(i-1, gt_cmap_)
-    mip = proj_label(vis)
+
+    # If  already 2D, keep as is
+    if vis.ndim == 3:     
+        mip = vis
+    else:                  
+        mip = proj_label(vis)
+
     mip_gt_mask = np.max(mip>0, axis=-1)
     io.imsave(outFn + '_gt.png', mip.astype(np.uint8))
 
@@ -193,7 +236,10 @@ def visualize_neurons(
     vis = np.zeros_like(dst)
     for i in range(1, num_pred + 1):
         vis[pred == i] = rgb(i-1, pred_cmap_)
-    mip = proj_label(vis)
+    if vis.ndim == 3:     
+        mip = vis
+    else:                 
+        mip = proj_label(vis)
     mip_pred_mask = np.max(mip>0, axis=-1)
     io.imsave(outFn + '_pred.png', mip.astype(np.uint8))
 
@@ -206,7 +252,12 @@ def visualize_neurons(
         vis[pred == i] = rgb(i-1, pred_cmap_)
     for i in fp_ind:
         vis[pred == i] = [255, 0, 0]
-    mip = proj_label(vis)
+
+    if vis.ndim == 3:      
+        mip = vis
+    else:                  
+        mip = proj_label(vis)
+
     mask = np.logical_and(mip_gt_mask, np.logical_not(np.max(mip > 0, axis=-1)))
     mip[mask] = [200, 200, 200]
     io.imsave(outFn + '_tp_pred_fp_fs.png', mip.astype(np.uint8))
@@ -224,7 +275,12 @@ def visualize_neurons(
     for i in fm_merged:
         if i not in gt_ind:
             vis[gt == i] = [255, 0, 0]
-    mip = proj_label(vis)
+
+    if vis.ndim == 3:     
+        mip = vis
+    else:                 
+        mip = proj_label(vis)
+
     mask = np.logical_and(mip_pred_mask, np.logical_not(np.max(mip > 0, axis=-1)))
     mip[mask] = [200, 200, 200]
     io.imsave(outFn + '_fn_fm.png', mip.astype(np.uint8))
@@ -243,7 +299,12 @@ def visualize_neurons(
     for i in fm_merged:
        if i not in gt_ind:
            vis[gt == i] = [192, 0, 0]
-    mip = proj_label(vis)
+
+    if vis.ndim == 3:    
+        mip = vis
+    else:                  # (Z, Y, X, 3) -> project along Z
+        mip = proj_label(vis)
+
     mask = np.logical_and(mip_pred_mask, np.logical_not(np.max(mip > 0, axis=-1)))
     mip[mask] = [200, 200, 200]
     io.imsave(outFn + '_fn_fm_v2.png', mip.astype(np.uint8))
