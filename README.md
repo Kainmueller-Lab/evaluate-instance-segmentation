@@ -1,15 +1,23 @@
-FISBe: Evaluation scripts for instance segmentation
-=======================================================
+<h1 align="center">FISBe: A real-world benchmark dataset for instance segmentation of long-range thin filamentous structures
+</h1>
 
-*currently under construction*
-This is the official implementation of the FISBe (FlyLight Instance Segmentation Benchmark) dataset pipeline, the first publicly available multi-neuron light microscopy dataset with pixel-wise annotations.
 
-It supports 2d and 3d segmentation abd computes a wide range of commonly found evaluation metrics (e.g., AP, F1, coverage, precision, recall).
-Additionally, it provides a visualization of the segmentation errors.
+![Alt text](assets/Cover_Image.png)
 
-About:
+## About
+
+*Currently under construction.*
+
+This is the official implementation of the FISBe (FlyLight Instance Segmentation Benchmark)
+dataset pipeline, the first publicly available multi-neuron light microscopy dataset with
+pixel-wise annotations.
+
+It supports 2D and 3D segmentation and computes a wide range of commonly used evaluation
+metrics (e.g., AP, F1, coverage, precision, recall). Additionally, it provides a visualization
+of segmentation errors.
+
+Overview:
 -------------
-
 This toolkit provides:
 
 - Standard and FlyLight-specific evaluation metrics
@@ -35,35 +43,32 @@ micromamba activate evalinstseg
 pip install -e .
 ```
 
-Run Benchmark:
--------
-You can use this repo in two ways:
+## Run Benchmark
 
-1. As a Python package (via `evaluate_file` / `evaluate_volume`),
+You can use this repository in two ways:
+
+1. As a Python package (via `evaluate_file` / `evaluate_volume`)
 2. From the command line
--------
-Co
-```
+
+```bash
 evalinstseg \
---res_file tests/pred/R14A02-20180905_65_A6.hdf \
---res_key volumes/gmm_label_cleaned \
---gt_file tests/gt/R14A02-20180905_65_A6.zarr \
---gt_key volumes/gt_instances \
---out_dir tests/results \
---app flylight
+  --res_file tests/pred/R14A02-20180905_65_A6.hdf \
+  --res_key volumes/gmm_label_cleaned \
+  --gt_file tests/gt/R14A02-20180905_65_A6.zarr \
+  --gt_key volumes/gt_instances \
+  --out_dir tests/results \
+  --app flylight
 ```
 
-output:
---------
+Output:
+
 - evaluation metrics are written to toml-file and returned as dict
 
 
---------
-Metrics Overview:
+## Metrics Overview:
 The evaluation computes metrics at multiple levels: per-threshold instance metrics, aggregated AP/F-scores, and global statistics
 
---------
-Instance-Level Metrics (per threshold confusion_matrix.th_*)
+### Instance-Level Metrics (per threshold confusion_matrix.th_*)
 | Metric                      | Description                              |
 | --------------------------- | ---------------------------------------- |
 | **AP_TP**                   | True positives at threshold              |
@@ -79,7 +84,7 @@ Instance-Level Metrics (per threshold confusion_matrix.th_*)
 Metrics are computed for thresholds:
 0.1, 0.2, ..., 0.9, 0.55, 0.65, 0.75, 0.85, 0.95.
 
-Aggregate Metrics
+### Aggregate Metrics
 | Metric         | Description                         |
 | -------------- | ----------------------------------- |
 | **avAP**       | Mean AP for thresholds ≥ 0.5        |
@@ -89,7 +94,7 @@ Aggregate Metrics
 | **avFscore59** | Mean F-score for thresholds 0.5–0.9 |
 | **avFscore19** | Mean F-score for thresholds 0.1–0.9 |
 
-General Metrics
+### General Metrics
 | Metric         | Description                         |
 | -------------- | ----------------------------------- |
 | **avAP**       | Mean AP for thresholds ≥ 0.5        |
@@ -99,7 +104,7 @@ General Metrics
 | **avFscore59** | Mean F-score for thresholds 0.5–0.9 |
 | **avFscore19** | Mean F-score for thresholds 0.1–0.9 |
 
-Optional Metrics: 
+### Optional Metrics: 
 | Metric               | Description                      |
 | -------------------- | -------------------------------- |
 | **Num GT**           | Number of ground-truth instances |
