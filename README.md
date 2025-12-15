@@ -12,7 +12,7 @@ This is the official implementation of the FISBe (FlyLight Instance Segmentation
 dataset pipeline, the first publicly available multi-neuron light microscopy dataset with
 pixel-wise annotations.
 
-It supports 2D and 3D segmentation and computes a wide range of commonly used evaluation
+The benchmark supports 2D and 3D segmentations and computes a wide range of commonly used evaluation
 metrics (e.g., AP, F1, coverage, precision, recall). Additionally, it provides a visualization
 of segmentation errors.
 
