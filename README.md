@@ -13,6 +13,7 @@ evaluation pipeline, the first publicly available multi-neuron light microscopy 
 pixel-wise annotations. 
 
 You can download the dataset on the official project page:
+
 👉 https://kainmueller-lab.github.io/fisbe/
 
 The benchmark supports 2D and 3D segmentations and computes a wide range of commonly used evaluation
