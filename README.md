@@ -6,11 +6,14 @@
 
 ## About
 
-*Currently under construction.*
+⚠️ *Currently under construction.*
 
-This is the official implementation of the FISBe (FlyLight Instance Segmentation Benchmark)
-dataset pipeline, the first publicly available multi-neuron light microscopy dataset with
-pixel-wise annotations.
+This is the official implementation of the **FISBe (FlyLight Instance Segmentation Benchmark)**
+evaluation pipeline, the first publicly available multi-neuron light microscopy dataset with
+pixel-wise annotations. 
+
+You can download the dataset on the official project page:
+👉 https://kainmueller-lab.github.io/fisbe/
 
 The benchmark supports 2D and 3D segmentations and computes a wide range of commonly used evaluation
 metrics (e.g., AP, F1, coverage, precision, recall). Additionally, it provides a visualization
@@ -50,6 +53,7 @@ You can use this repository in two ways:
 1. As a Python package (via `evaluate_file` / `evaluate_volume`)
 2. From the command line
 
+Example:
 ```bash
 evalinstseg \
   --res_file tests/pred/R14A02-20180905_65_A6.hdf \
@@ -59,6 +63,13 @@ evalinstseg \
   --out_dir tests/results \
   --app flylight
 ```
+
+By setting `--app flylight`, the pipeline automatically uses the default FlyLight benchmark configuration.
+
+You can also define custom configurations, including:
+- localization criteria
+- assignment strategy
+- metric subsets
 
 Output:
 
@@ -95,22 +106,23 @@ Metrics are computed for thresholds:
 | **avFscore19** | Mean F-score for thresholds 0.1–0.9 |
 
 ### General Metrics
-| Metric         | Description                         |
-| -------------- | ----------------------------------- |
-| **avAP**       | Mean AP for thresholds ≥ 0.5        |
-| **avAP59**     | AP averaged over thresholds 0.5–0.9 |
-| **avAP19**     | AP averaged over thresholds 0.1–0.9 |
-| **avFscore**   | Mean F-score for thresholds 0.1–0.9 |
-| **avFscore59** | Mean F-score for thresholds 0.5–0.9 |
-| **avFscore19** | Mean F-score for thresholds 0.1–0.9 |
+| Metric                 | Description                                      |
+| ---------------------- | ------------------------------------------------ |
+| **Num GT**             | Number of ground-truth instances                 |
+| **Num Pred**           | Number of predicted instances                    |
+| **TP_05**              | True positives at threshold 0.5                  |
+| **TP_05_rel**          | TP_05 / Num GT                                   |
+| **TP_05_cldice**       | clDice scores of matched pairs at threshold 0.5  |
+| **avg_TP_05_cldice**   | Mean clDice over matched pairs at threshold 0.5  |
 
-### Optional Metrics: 
-| Metric               | Description                      |
-| -------------------- | -------------------------------- |
-| **Num GT**           | Number of ground-truth instances |
-| **Num Pred**         | Number of predicted instances    |
-| **TP_05**            | True positives at threshold 0.5  |
-| **TP_05_rel**        | TP_05 / Num_GT                   |
-| **TP_05_cldice**     | clDice scores for matched pairs  |
-| **avg_TP_05_cldice** | Mean of TP_05_cldice             |
+### Optional General Metrics 
+| Metric                  | Description |
+| ----------------------- | ----------- |
+| **avg_gt_skel_coverage** | Mean skeleton coverage over all GT instances |
+| **avg_tp_skel_coverage** | Mean skeleton coverage over TP GT instances (> 0.5) |
+| **avg_f1_cov_score**     | 0.5 × avFscore19 + 0.5 × avg_gt_skel_coverage |
+| **FM**                   | Many-to-many false merge score (threshold `fm_thresh`) |
+| **FS**                   | Many-to-many false split score (threshold `fs_thresh`) |
+| **avg_gt_cov_dim**       | Mean GT coverage for “dim” instances |
+| **avg_gt_cov_overlap**   | Mean GT coverage for overlapping-instance regions |
 
