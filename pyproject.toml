@@ -58,15 +58,15 @@ keywords = ["instance segmentation", "segmentation", "evaluation", "metrics"]  #
 # authored the project, and a valid email address corresponding to the name
 # listed.
 authors = [
-  {name = "Peter Hirsch", email = "peter.hirsch@mdc-berlin.de.com" }, # Optional
-  {name = "Lisa Mais", email = "lisa.mais@mdc-berlin.de.com" }
+  {name = "Peter Hirsch", email = "peter.hirsch@mdc-berlin.de" }, # Optional
+  {name = "Lisa Mais", email = "lisa.mais@mdc-berlin.de" }
 ]
 
 # This should be your name or the names of the organization who currently
 # maintains the project, and a valid email address corresponding to the name
 # listed.
 maintainers = [
-  {name = "Peter Hirsch", email = "peter.hirsch@mdc-berlin.de.com" }, # Optional
+  {name = "Peter Hirsch", email = "peter.hirsch@mdc-berlin.de" }, # Optional
 ]
 
 # Classifiers help users find your project by categorizing it.
