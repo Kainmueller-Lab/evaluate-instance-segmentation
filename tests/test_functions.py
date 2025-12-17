@@ -4,6 +4,8 @@ import tempfile
 import os
 import h5py
 import zarr
+from pathlib import Path
+
 
 from evalinstseg.evaluate import evaluate_volume
 from evalinstseg.match import instance_mask, greedy_many_to_many_matching
@@ -267,6 +269,101 @@ class TestEndToEnd(unittest.TestCase):
             self.assertEqual(pred_loaded.shape, (15, 1, 50, 50))
             self.assertEqual(gt_loaded.shape, (1, 50, 50))
 
+import os
+import unittest
+import tempfile
+
+import numpy as np
+import h5py
+from imageio.v3 import imread
+from skimage.measure import label
+from skimage.morphology import remove_small_objects
+
+from evalinstseg.evaluate import evaluate_volume
+
+
+class TestNucleiVisualizationRealImage(unittest.TestCase):
+    @staticmethod
+    def _repo_path_relative_to_this_test(*parts):
+        # This resolves paths relative to the current test file location
+        here = os.path.dirname(__file__)
+        return os.path.join(here, *parts)
+
+    @staticmethod
+    def _load_mask_as_instances_png(png_path, threshold=128, min_size=20):
+        img = imread(png_path)
+        if img.ndim == 3:
+            img = img[..., 0]  # handle RGB/RGBA
+
+        # Robust binarization: avoids tiny non-zero artifacts becoming objects
+        bw = img >= threshold
+
+        # Optional cleanup: remove tiny speckles that create phantom CCs
+        bw = remove_small_objects(bw, min_size=min_size)
+
+        lbl = label(bw).astype(np.int32)
+        return lbl
+
+    def test_visualize_nuclei_from_real_png_writes_vis_hdf(self):
+        png_path = self._repo_path_relative_to_this_test("images", "nuclein.png")
+        self.assertTrue(os.path.exists(png_path), f"Missing test image: {png_path}")
+
+        lbl2d = self._load_mask_as_instances_png(png_path, threshold=128, min_size=20)
+        n = int(lbl2d.max())
+        self.assertGreater(n, 0, "No instances found in test image after preprocessing")
+
+        gt = lbl2d[None, ...]
+        pred = lbl2d[None, ...].copy()  # perfect match => should produce TP
+
+        with tempfile.TemporaryDirectory() as td:
+
+            here = Path(__file__).resolve().parent             
+            vis_dir = here / "results" / "vis"
+            vis_dir.mkdir(parents=True, exist_ok=True)
+
+            outFn = str(vis_dir / "nuclei_realimg") 
+            metrics = evaluate_volume(
+                gt, pred, ndim=2, outFn=outFn,
+                localization_criterion="iou",
+                assignment_strategy="greedy",
+                visualize=True,
+                visualize_type="nuclei",
+                evaluate_false_labels=True
+            )
+
+            vis_path = outFn + "_vis.hdf"
+            self.assertTrue(os.path.exists(vis_path), "Expected *_vis.hdf not written")
+
+            # Verify datasets exist and behave as expected for perfect match
+            with h5py.File(vis_path, "r") as f:
+                required = [
+                    "volumes/vis_tp",
+                    "volumes/vis_fp",
+                    "volumes/vis_fn",
+                    "volumes/vis_tp_seg",
+                    "volumes/vis_tp_seg2",
+                    "volumes/vis_fp_seg",
+                    "volumes/vis_fn_seg",
+                ]
+                for k in required:
+                    self.assertIn(k, f, f"Missing dataset in vis file: {k}")
+
+                # Boundaries: support both older/newer key names
+                fp_bnd_keys = ("volumes/vis_fp_seg_bnd", "volumes/vis_fp_bnd")
+                fn_bnd_keys = ("volumes/vis_fn_seg_bnd", "volumes/vis_fn_bnd")
+
+                self.assertTrue(any(k in f for k in fp_bnd_keys),
+                                f"Missing FP boundary dataset (tried {fp_bnd_keys})")
+                self.assertTrue(any(k in f for k in fn_bnd_keys),
+                                f"Missing FN boundary dataset (tried {fn_bnd_keys})")
+
+                # Perfect match sanity checks
+                self.assertGreater(np.max(f["volumes/vis_tp"][:]), 0.0)
+                self.assertEqual(np.max(f["volumes/vis_fn_seg"][:]), 0.0)
+                self.assertEqual(np.max(f["volumes/vis_fp_seg"][:]), 0.0)
+
+
+
 
 if __name__ == '__main__':
     # Create test suite
@@ -278,7 +375,8 @@ if __name__ == '__main__':
         TestGreedyMatching,
         TestDataPreprocessing,
         TestLocalizationCriterion,
-        TestEndToEnd
+        TestEndToEnd,
+        TestNucleiVisualizationRealImage,   
     ]
     
     for test_class in test_classes:
