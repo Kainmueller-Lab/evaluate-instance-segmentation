@@ -190,7 +190,7 @@ def get_m2m_metrics(gt_labels, pred_labels, num_pred_labels, matchMat, thresh, o
         gt_labels: Ground truth labels
         pred_labels: Predicted labels
         num_pred_labels: Number of predicted labels
-        matchMat: A matrix depending on the localization criterion (Recall matrix for clDice, IoU matrix for IoU)
+        matchMat: Recall matrix for clDice (for IoU matrix appropriate m2m matching is needed)
         thresh: Threshold for matching
         overlaps: Whether to allow overlapping instances
         
