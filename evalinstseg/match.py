@@ -164,7 +164,7 @@ def greedy_many_to_many_matching(gt_labels, pred_labels, locMat, thresh,
 
 
 def get_false_labels(
-        tp_pred_ind, tp_gt_ind, num_pred_labels, num_gt_labels, locMat,
+        tp_pred_ind, tp_gt_ind, num_pred_labels, num_gt_labels,
         precMat, recallMat, thresh, recallMat_wo_overlap):
 
     # get false positive indices
@@ -212,4 +212,32 @@ def get_false_labels(
     return (
         fp_ind, fn_ind, fs_ind, fm_pred_ind, fm_gt_ind, fm_count,
         fp_ind_only_bg)
+
+
+def get_m2m_matches(locMat, thresh, gt_labels=None, pred_labels=None, overlaps=True):
+    """Get many-to-many matches between gt and predicted labels. 
+    If we have no overlaps, we can do easy matching based on thresholding the locMat."""
+
+    # If we have overlapping instances, we need to do expensive greedy many-to-many matching
+    if overlaps:
+        if gt_labels is None or pred_labels is None:
+            raise ValueError("gt_labels and pred_labels required when overlaps=True")
+        matches = greedy_many_to_many_matching(gt_labels, pred_labels, locMat, thresh)
+        if matches is not None:
+            # key and values are 0-based, convert to 1-based
+            matches = {k + 1: [v + 1 for v in val] for k, val in matches.items()}
+        return matches
+    else:
+        # Simple matching based on threshold
+        matches = {}
+        locFgMat = locMat[1:, 1:] # excluding background
+        rows, cols = np.nonzero(locFgMat > thresh)
+        for gt_idx, pred_idx in zip(rows, cols):
+            gt_id = gt_idx + 1 # 1-based IDs
+            pred_id = pred_idx + 1
+            if gt_id not in matches:
+                matches[gt_id] = [pred_id]
+            else:
+                matches[gt_id].append(pred_id)
+        return matches
 
