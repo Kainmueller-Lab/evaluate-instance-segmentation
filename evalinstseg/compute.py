@@ -7,7 +7,7 @@ from .localize import (
     get_centerline_overlap_single,
     get_centerline_overlap,
 )
-from .match import assign_labels, greedy_many_to_many_matching
+from .match import assign_labels, greedy_many_to_many_matching, get_m2m_matches
 
 logger = logging.getLogger(__name__)
 
@@ -160,34 +160,45 @@ def get_gt_coverage_overlap(
     return gt_ovlp, tp_05_ovlp, tp_05_rel_ovlp, gt_covs_ovlp, avg_cov_ovlp
 
 
-def get_m2m_fm(
-    gt_labels, pred_labels, num_pred_labels, recallMat, fm_thresh, matches=None
-):
-    # get false merges
-    if matches is None:
-        # call many-to-many matching based on clRecall
-        matches = greedy_many_to_many_matching(
-            gt_labels, pred_labels, recallMat, fm_thresh
-        )
+def compute_m2m_stats(matches, num_pred_labels):
+    '''Helper to compute false merges and false splits from many-to-many matches.'''
+    
     fm = 0
-    if matches is not None:
-        fms = np.zeros(num_pred_labels)  # without 0 background
-        for k, v in matches.items():
-            for cv in v:
-                fms[cv - 1] += 1
-        fms = np.maximum(fms - 1, np.zeros(num_pred_labels))
-        fm = int(np.sum(fms))
-    return fm, matches
-
-
-def get_m2m_fs(gt_labels, pred_labels, recallMat, fs_thresh, matches=None):
-    # get false splits
-    if matches is None:
-        matches = greedy_many_to_many_matching(
-            gt_labels, pred_labels, recallMat, fs_thresh
-        )
     fs = 0
     if matches is not None:
+        # FS calculation
         for k, v in matches.items():
             fs += max(0, len(v) - 1)
-    return fs, matches
+
+        # FM calculation
+        if num_pred_labels > 0:
+            fms = np.zeros(num_pred_labels)  # without 0 background
+            for k, v in matches.items():
+                for cv in v:
+                    fms[cv - 1] += 1
+            fms = np.maximum(fms - 1, np.zeros(num_pred_labels))
+            fm = int(np.sum(fms))
+    
+    return fm, fs
+
+
+def get_m2m_metrics(gt_labels, pred_labels, num_pred_labels, matchMat, thresh, overlaps=True):
+    """
+    Compute false merge and false split metrics for any localization criterion using many-to-many matching.
+    
+    Args:
+        gt_labels: Ground truth labels
+        pred_labels: Predicted labels
+        num_pred_labels: Number of predicted labels
+        matchMat: A matrix depending on the localization criterion (Recall matrix for clDice, IoU matrix for IoU)
+        thresh: Threshold for matching
+        overlaps: Whether to allow overlapping instances
+        
+    Returns:
+        Tuple of (false_merge, false_split, matches)
+    """
+    matches = get_m2m_matches(
+        matchMat, thresh, gt_labels, pred_labels, overlaps
+    )
+    fm, fs = compute_m2m_stats(matches, num_pred_labels)
+    return fm, fs, matches
