@@ -205,8 +205,8 @@ def average_sets(acc_a, dict_a, acc_b, dict_b):
     gt_covs = list(dict_a["gt_covs"]) + list(dict_b["gt_covs"])
     num_gt = dict_a["general"]["Num GT"] + dict_b["general"]["Num GT"]
     tp_05 = dict_a["general"]["TP_05"] + dict_b["general"]["TP_05"]
-    tp_05_cldice = list(dict_a["general"]["tp_05_cldice"]) + \
-            list(dict_b["general"]["tp_05_cldice"])
+    tp_05_cldice = list(dict_a["general"]["TP_05_cldice"]) + \
+            list(dict_b["general"]["TP_05_cldice"])
 
     per_instance_counts = {}
     per_instance_counts["general"] = {

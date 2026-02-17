@@ -14,6 +14,7 @@ from .util import (
     check_fix_and_unify_ids,
     get_output_name,
     read_file,
+    load_partly_config
 )
 from .localize import compute_localization_criterion
 from .match import assign_labels, get_false_labels
@@ -490,6 +491,10 @@ def main():
         "--run_dirs", nargs="+", type=str, help="List of 3 experiment directories"
     )
     parser.add_argument(
+        "--split_file", type=str, default="sample_list_per_split.txt", 
+        help="Path to sample split file"
+    )
+    parser.add_argument(
         "--res_file", nargs="+", type=str, help="path to result file"
     )
     parser.add_argument(
@@ -630,26 +635,36 @@ def main():
     logger.debug("arguments %s", tuple(sys.argv))
     args = parser.parse_args()
 
+    # --- 1. LOAD CONFIG for PARTLY LABELED DATA ---
+    partly_set = set()
+    if args.split_file and os.path.exists(args.split_file):
+        partly_set = load_partly_config(args.split_file)
+        logger.info(f"Loaded {len(partly_set)} partly labeled samples from config.")
+
+    # --- HELPER: FILE MATCHING ---
     def get_gt_file(in_fn, gt_folder):
         """Helper to get gt file corresponding to input result file."""
-        out_fn = os.path.join(
-            gt_folder, os.path.basename(in_fn).split(".")[0] + ".zarr"
-        )
-        return out_fn
+        return os.path.join(gt_folder, os.path.basename(in_fn).split(".")[0] + ".zarr")
 
-    def _run_loop(res_files, gt_files, out_dirs, partly_list_loc):
+    # --- HELPER: EVALUATION LOOP ---
+    def _run_loop(res_files, gt_files, out_dirs):
         """Core evaluation loop used in normal and stability mode."""
-        
         loop_samples = []
         loop_metrics = []
-        for res_file, gt_file, partly, out_dir in zip(
-            res_files, gt_files, partly_list_loc, out_dirs
-        ):
-            if not os.path.exists(out_dir): os.makedirs(out_dir, exist_ok=True)
-            
+        actual_partly_flags = []
+
+        for res_file, gt_file, out_dir in zip(res_files, gt_files, out_dirs):
+            if not os.path.exists(out_dir):
+                os.makedirs(out_dir, exist_ok=True)
             sample_name = os.path.basename(res_file).split(".")[0]
             logger.info("sample_name: %s", sample_name)
             
+            # AUTO-DETECT PARTLY MODE
+            if partly_set:
+                is_partly = sample_name in partly_set
+            else:
+                is_partly = args.partly
+    
             metric_dict = evaluate_file(
                 res_file,
                 gt_file,
@@ -663,7 +678,7 @@ def main():
                 add_general_metrics=args.add_general_metrics,
                 visualize=args.visualize,
                 visualize_type=args.visualize_type,
-                partly=partly,
+                partly=is_partly,
                 foreground_only=args.foreground_only,
                 remove_small_components=args.remove_small_components,
                 evaluate_false_labels=args.evaluate_false_labels,
@@ -675,18 +690,76 @@ def main():
             )
             loop_metrics.append(metric_dict)
             loop_samples.append(sample_name)
-            print(f"Evaluated {sample_name}: {metric_dict}")
+            actual_partly_flags.append(is_partly)
+            print(f"Evaluated {sample_name}: {metric_dict}, Partly={is_partly}")
             
-        return loop_metrics, loop_samples
+        return loop_metrics, loop_samples, np.array(actual_partly_flags, dtype=bool)
+
+    # --- PRESETS ---
+    if args.app == "flylight":
+        print("Using FlyLight Presets...")
+        args.ndim = 3
+        args.localization_criterion = "cldice"
+        args.assignment_strategy = "greedy"
+        args.remove_small_components = 800
+        args.metric = "general.avg_f1_cov_score"
+        args.add_general_metrics = [
+            "avg_gt_skel_coverage",
+            "avg_f1_cov_score",
+            "false_merge",
+            "false_split",
+            "avg_gt_cov_dim",
+            "avg_gt_cov_overlap",
+        ]
+        args.summary = [
+            "general.Num GT",
+            "general.Num Pred",
+            "general.avg_f1_cov_score",
+            "confusion_matrix.avFscore",
+            "general.avg_gt_skel_coverage",
+            "confusion_matrix.th_0_5.AP_TP",
+            "confusion_matrix.th_0_5.AP_FP",
+            "confusion_matrix.th_0_5.AP_FN",
+            "general.FM",
+            "general.FS",
+            "general.TP_05",
+            "general.TP_05_rel",
+            "general.avg_TP_05_cldice",
+            "general.GT_dim",
+            "general.TP_05_dim",
+            "general.TP_05_rel_dim",
+            "general.avg_gt_cov_dim",
+            "general.GT_overlap",
+            "general.TP_05_overlap",
+            "general.TP_05_rel_overlap",
+            "general.avg_gt_cov_overlap",
+            "confusion_matrix.th_0_1.fscore",
+            "confusion_matrix.th_0_2.fscore",
+            "confusion_matrix.th_0_3.fscore",
+            "confusion_matrix.th_0_4.fscore",
+            "confusion_matrix.th_0_5.fscore",
+            "confusion_matrix.th_0_6.fscore",
+            "confusion_matrix.th_0_7.fscore",
+            "confusion_matrix.th_0_8.fscore",
+            "confusion_matrix.th_0_9.fscore",
+        ]
+        args.visualize_type = "neuron"
+        args.fm_thresh = 0.1
+        args.fs_thresh = 0.05
+        args.eval_dim = True
 
     # Stability Mode (Wraps logic 3 times)
     if args.stability_mode:
         if not args.run_dirs or len(args.run_dirs) != 3:
             raise ValueError("Stability mode requires exactly 3 directories passed to --run_dirs")
         
-        stability_scores = []
-        print("--- EVALUTE USING STABILITY MODE ---")
-
+        # Lists to store the 3 run results for each mode
+        scores_complete = []
+        scores_partly = []
+        scores_combined = []
+        
+        print("--- 3x STABILITY MODE ---")
+        
         for run_idx, run_dir in enumerate(args.run_dirs):
             print(f"Processing Run {run_idx+1}: {run_dir}")
             
@@ -700,24 +773,48 @@ def main():
             run_out_dirs = [os.path.join(args.out_dir[0], f"seed_{run_idx+1}")] * len(run_res_files)
             
             # Run the inner loop
-            m_dicts, s_names = _run_loop(run_res_files, run_gt_files, run_out_dirs, [args.partly]*len(run_res_files))
+            metric_dicts, samples, actual_partly_flags = _run_loop(run_res_files, run_gt_files, run_out_dirs)
             
-            # Aggregate just this run
-            metrics_full = {s: m for m, s in zip(m_dicts, s_names) if m is not None}
-            acc, _ = average_flylight_score_over_instances(s_names, metrics_full)
-            stability_scores.append(acc)
+            metrics_full = {s: m for m, s in zip(metric_dicts, samples) if m is not None}
+            s_arr = np.array(samples)
+
+            # CALCULATE SEPARATE MODES
+            if len(np.unique(actual_partly_flags)) > 1:
+                # Mode 1: Complete Only
+                acc_cpt, acc_inst_cpt = average_flylight_score_over_instances(s_arr[~actual_partly_flags], metrics_full)
+                scores_complete.append(acc_cpt)
+
+                # Mode 2: Partly Only
+                acc_prt, acc_inst_prt = average_flylight_score_over_instances(s_arr[actual_partly_flags], metrics_full)
+                scores_partly.append(acc_prt)
+
+                # Mode 3: Combined
+                acc_comb, _ = average_sets(acc_cpt, acc_inst_cpt, acc_prt, acc_inst_prt)
+                scores_combined.append(acc_comb)
+            else:
+                # Uniform case
+                acc, _ = average_flylight_score_over_instances(samples, metrics_full)
+                scores_combined.append(acc)
 
         # Print Average and Std Dev across runs
         print("\n=== FISBe BENCHMARK RESULTS (Mean ± Std) ===")
-        if stability_scores:
-            for key in stability_scores[0].keys():
-                values = [s[key] for s in stability_scores if key in s]
-                if len(values) == 3:
-                    print(f"{key:<30}: {np.mean(values):.4f} ± {np.std(values):.4f}")
+        
+        def print_stats(title, score_list):
+            if not score_list: return
+            print(f"\n--- {title} ---")
+            for key in score_list[0].keys():
+                vals = [s[key] for s in score_list if key in s]
+                if len(vals) == 3:
+                    print(f"{key:<30}: {np.mean(vals):.4f} ± {np.std(vals):.4f}")
+        
+        # Report all 3
+        print_stats("MODE 1: COMPLETELY LABELED", scores_complete)
+        print_stats("MODE 2: PARTLY LABELED", scores_partly)
+        print_stats("MODE 3: COMBINED (MAIN BENCHMARK)", scores_combined)
 
     # Normal Mode 
     else:
-        print("--- EVALUTE USING SINGLE DIR ---")
+        print("--- EVALUATE USING SINGLE DIR ---")
         # shortcut if res_file and gt_file contain folders
         if len(args.res_file) == 1 and len(args.gt_file) == 1:
             res_file = args.res_file[0]
@@ -732,18 +829,11 @@ def main():
         assert len(args.res_file) == len(args.gt_file), (
             "Please check, not the same number of result and gt files"
         )
-        # set partly parameter for all samples if not done already
-        if len(args.res_file) > 1:
-            if args.partly_list is not None:
-                assert len(args.partly_list) == len(args.res_file), (
-                    "Please check, not the same number of result files "
-                    "and partly_list values"
-                )
-                partly_list = np.array(args.partly_list, dtype=bool)
-            else:
-                partly_list = [args.partly] * len(args.res_file)
-        else:
-            partly_list = [args.partly]
+        
+        # We don't need partly_list prep here anymore as we auto-detect
+        # But we still check validity if user provided it
+        if args.partly_list is not None:
+             assert len(args.partly_list) == len(args.res_file)
 
         # check out_dir
         if len(args.res_file) > 1:
@@ -761,64 +851,7 @@ def main():
         if args.summary_out_dir is None:
             args.summary_out_dir = args.out_dir[0]
 
-        if args.app is not None:
-            if args.app == "flylight":
-                print(
-                    "Warning: parameter app is set and will overwrite parameters. "
-                    "This might not be what you want."
-                )
-                args.ndim = 3
-                args.localization_criterion = "cldice"
-                args.assignment_strategy = "greedy"
-                args.remove_small_components = 800
-                # args.evaluate_false_labels = True
-                args.metric = "general.avg_f1_cov_score"
-                args.add_general_metrics = [
-                    "avg_gt_skel_coverage",
-                    "avg_f1_cov_score",
-                    "false_merge",
-                    "false_split",
-                    "avg_gt_cov_dim",
-                    "avg_gt_cov_overlap",
-                ]
-                args.summary = [
-                    "general.Num GT",
-                    "general.Num Pred",
-                    "general.avg_f1_cov_score",
-                    "confusion_matrix.avFscore",
-                    "general.avg_gt_skel_coverage",
-                    "confusion_matrix.th_0_5.AP_TP",
-                    "confusion_matrix.th_0_5.AP_FP",
-                    "confusion_matrix.th_0_5.AP_FN",
-                    "general.FM",
-                    "general.FS",
-                    "general.TP_05",
-                    "general.TP_05_rel",
-                    "general.avg_TP_05_cldice",
-                    "general.GT_dim",
-                    "general.TP_05_dim",
-                    "general.TP_05_rel_dim",
-                    "general.avg_gt_cov_dim",
-                    "general.GT_overlap",
-                    "general.TP_05_overlap",
-                    "general.TP_05_rel_overlap",
-                    "general.avg_gt_cov_overlap",
-                    "confusion_matrix.th_0_1.fscore",
-                    "confusion_matrix.th_0_2.fscore",
-                    "confusion_matrix.th_0_3.fscore",
-                    "confusion_matrix.th_0_4.fscore",
-                    "confusion_matrix.th_0_5.fscore",
-                    "confusion_matrix.th_0_6.fscore",
-                    "confusion_matrix.th_0_7.fscore",
-                    "confusion_matrix.th_0_8.fscore",
-                    "confusion_matrix.th_0_9.fscore",
-                ]
-                args.visualize_type = "neuron"
-                args.fm_thresh = 0.1
-                args.fs_thresh = 0.05
-                args.eval_dim = True
-
-        metric_dicts, samples = _run_loop(args.res_file, args.gt_file, outdir_list, partly_list)
+        metric_dicts, samples, actual_partly_flags = _run_loop(args.res_file, args.gt_file, outdir_list)
 
         # aggregate over instances
         metrics_full = {}
@@ -827,15 +860,16 @@ def main():
             if metric_dict is None:
                 continue
             metrics_full[sample] = metric_dict
-        if len(np.unique(partly_list)) > 1:
+            
+        if len(np.unique(actual_partly_flags)) > 1:
             print("averaging for combined")
             # get average over instances for completely
             samples = np.array(samples)
             acc_cpt, acc_inst_cpt = average_flylight_score_over_instances(
-                samples[partly_list == False], metrics_full
+                samples[actual_partly_flags == False], metrics_full
             )
             acc_prt, acc_inst_prt = average_flylight_score_over_instances(
-                samples[partly_list == True], metrics_full
+                samples[actual_partly_flags == True], metrics_full
             )
             acc, acc_all_instances = average_sets(
                 acc_cpt, acc_inst_cpt, acc_prt, acc_inst_prt

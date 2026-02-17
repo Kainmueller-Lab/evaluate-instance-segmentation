@@ -55,12 +55,13 @@ The `evalinstseg` command is automatically available after installation.
 
 ### 1. Evaluate a Single File
 ```bash
-evalinstseg \
-  --res_file tests/pred/R14A02-20180905.hdf \
-  --res_key volumes/labels \
-  --gt_file tests/gt/R14A02-20180905.zarr \
-  --gt_key volumes/gt_instances \
-  --out_dir tests/results \
+evalinstseg `
+  --res_file tests/pred/R14A02-20180905_65_A6.hdf `
+  --res_key volumes/gmm_label_cleaned `
+  --gt_file tests/gt/R14A02-20180905_65_A6.zarr `
+  --gt_key volumes/gt_instances `
+  --split_file assets/sample_list_per_split.txt `
+  --out_dir tests/results `
   --app flylight
 ```
 
@@ -68,12 +69,12 @@ evalinstseg \
 If you provide a directory path to `--res_file`, the tool will look for matching Ground Truth files in the `--gt_file` folder. Files are matched by name.
 
 ```bash
-evalinstseg \
-  --res_file /path/to/predictions_folder \
-  --res_key volumes/labels \
-  --gt_file /path/to/ground_truth_folder \
-  --gt_key volumes/gt_instances \
-  --out_dir /path/to/output_folder \
+evalinstseg `
+  --res_file /path/to/predictions_folder `
+  --res_key volumes/gmm_label_cleaned `
+  --gt_file /path/to/ground_truth_folder `
+  --gt_key volumes/gt_instances `
+  --out_dir /path/to/output_folder `
   --app flylight
 ```
 
