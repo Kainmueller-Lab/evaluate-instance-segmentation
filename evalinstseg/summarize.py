@@ -205,8 +205,8 @@ def average_sets(acc_a, dict_a, acc_b, dict_b):
     gt_covs = list(dict_a["gt_covs"]) + list(dict_b["gt_covs"])
     num_gt = dict_a["general"]["Num GT"] + dict_b["general"]["Num GT"]
     tp_05 = dict_a["general"]["TP_05"] + dict_b["general"]["TP_05"]
-    tp_05_cldice = list(dict_a["general"]["tp_05_cldice"]) + \
-            list(dict_b["general"]["tp_05_cldice"])
+    tp_05_cldice = list(dict_a["general"]["TP_05_cldice"]) + \
+            list(dict_b["general"]["TP_05_cldice"])
 
     per_instance_counts = {}
     per_instance_counts["general"] = {
@@ -239,4 +239,42 @@ def average_sets(acc_a, dict_a, acc_b, dict_b):
             per_instance_counts["confusion_matrix"]["th_0_5"]["AP_FN"] = \
                     cm_a["AP_FN"] + cm_b["AP_FN"]
     return acc, per_instance_counts
+
+
+def aggregate_and_report(metric_dicts, samples, partly_flags):
+    """
+    A single source of truth for splitting 'Complete' vs 'Partly' 
+    and calculating the 'Combined' score.
+    """
+    try:
+        metrics_full = {s: m for m, s in zip(metric_dicts, samples) if m is not None}
+        s_arr = np.array(samples)
+        
+        # Check if we have consistent partly flags (length matches samples)
+        if len(partly_flags) != len(samples):
+             # Try to subset if metric_dicts has fewer items (e.g. None filtered out earlier)?
+             # The caller usually provides matching lists. 
+             # But if metric_dicts has Nones, metrics_full will be smaller.
+             # We should rely on s_arr being aligned with partly_flags.
+             pass
+
+        if len(np.unique(partly_flags)) > 1:
+            # 1. Complete
+            cpt_mask = partly_flags == False
+            acc_cpt, inst_cpt = average_flylight_score_over_instances(s_arr[cpt_mask], metrics_full)
+            
+            # 2. Partly
+            prt_mask = partly_flags == True
+            acc_prt, inst_prt = average_flylight_score_over_instances(s_arr[prt_mask], metrics_full)
+            
+            # 3. Combined
+            acc_comb, inst_comb = average_sets(acc_cpt, inst_cpt, acc_prt, inst_prt)
+            
+            return (acc_cpt, inst_cpt), (acc_prt, inst_prt), (acc_comb, inst_comb)
+        else:
+            acc, inst = average_flylight_score_over_instances(samples, metrics_full)
+            return None, None, (acc, inst)
+    except Exception as e:
+        print(f"Error in aggregation: {e}")
+        return None, None, (0.0, {})
 
