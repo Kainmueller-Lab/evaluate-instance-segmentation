@@ -153,13 +153,12 @@ The single scalar used to rank methods on the leaderboard:
 $$S = 0.5 \cdot \text{avF1} + 0.5 \cdot C$$
 
 ### Key Metrics
-
 - **avF1**: Average F1 score across clDice thresholds.
-- **C (Coverage)**: Average ground truth skeleton coverage (assigned via max clPrecision; score via clRecall on union of matches).
-- **clDiceTP**: Average clDice score of matched True Positives (at threshold 0.5).
-- **tp**: Relative number of True Positives at threshold 0.5 ($TP_{0.5} / N_{\mathrm{GT}}$).
-- **FS (False Splits)**: $\sum_{\mathrm{gt}} \max(0, N_{\text{assigned\_pred}} - 1)$
-- **FM (False Merges)**: $\sum_{\mathrm{pred}} \max(0, N_{\text{assigned\_gt}} - 1)$
+- **C (Coverage)**: Average GT skeleton coverage (assignment via max clPrecision; scoring via clRecall on union of matches).
+- **clDiceTP**: Average clDice score of matched TPs at threshold 0.5.
+- **tp**: Relative number of TPs at threshold 0.5 (`TP_0.5 / N_GT`).
+- **FS (False Splits)**: Sum over GT of `max(0, N_assigned_pred - 1)`.
+- **FM (False Merges)**: Sum over predictions of `max(0, N_assigned_gt - 1)`.
 
 ### Partly Labeled Data Mode (`--partly`)
 FISBe includes 71 partly labeled images where only a subset of neurons is annotated.
