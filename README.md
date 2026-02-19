@@ -5,8 +5,6 @@
 
 ## About
 
-⚠️ *Currently under construction.*
-
 This is the official implementation of the **FISBe (FlyLight Instance Segmentation Benchmark)** evaluation pipeline. It is the first publicly available multi-neuron light microscopy dataset with pixel-wise annotations.
 
 **Download the dataset:** [https://kainmueller-lab.github.io/fisbe/](https://kainmueller-lab.github.io/fisbe/)
