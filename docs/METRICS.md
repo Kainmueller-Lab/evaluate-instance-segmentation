@@ -16,17 +16,17 @@ $$S = 0.5 \cdot \text{avF1} + 0.5 \cdot C$$
 | avF1 | mean F1 over th=0.1..0.9 | `confusion_matrix.avFscore19` |
 | C | avg GT coverage (union-of-preds, clRecall) | `general.avg_gt_skel_coverage` |
 | clDiceTP | mean clDice of TP matches at th=0.5 | `general.avg_TP_05_cldice` |
-| tp | (#TP matches at th=0.5) / (#GT) | `general.TP_05_rel` |
+| tp | $(\#TP \text{ at } th=0.5) / (\#GT)$ | `general.TP_05_rel` |
 | FS | false splits count | `general.FS` |
 | FM | false merges count | `general.FM` |
 
 ---
 
-### Official Ranking Metrics Definition
+### Official ranking metrics definition
 | Metric Key | Definition | Matching Strategy |
 | :--- | :--- | :--- |
-| **`avFscore19`** (avF1) | Mean F1 score averaged over clDice thresholds 0.1 to 0.9. | Greedy 1-to-1 |
-| **`avg_gt_skel_coverage`** (C) | Average GT centerline coverage computed per GT using the union of matched predictions (see below). | One-to-Many |
+| **`confusion_matrix.avFscore19`** (avF1) | Mean F1 score averaged over clDice thresholds 0.1 to 0.9. | Greedy 1-to-1 |
+| **`general.avg_gt_skel_coverage`** (C) | Average GT centerline coverage computed per GT using the union of matched predictions (see below). | One-to-Many |
 
 #### Coverage (C) definition (official protocol)
 **Localization:** compute clPrecision for all (pred, gt) pairs.  
@@ -41,13 +41,14 @@ For each threshold th ∈ {0.1, 0.2, …, 0.9} after greedy 1-to-1 matching by c
 
 Compute F1 = 2TP / (2TP + FP + FN) aggregated across all images, then average across thresholds.
 
-### Topology Error Attribution
+### Topology error attribution
 Explicit counts of topological errors specific to filamentous structures.
 
 | Metric Key | Definition | Matching Strategy |
 | :--- | :--- | :--- |
-| **`FS`** (False Splits) | $\sum_{gt} \max(0, N_{\text{assigned\_pred}} - 1)$ | Many-to-Many (Consumption) |
-| **`FM`** (False Merges) | $\sum_{pred} \max(0, N_{\text{assigned\_gt}} - 1)$ | Many-to-Many (Consumption) |
+| **`general.FS`** (False Splits) | $\sum_{\mathrm{gt}} \max(0, N_{\text{assigned pred}} - 1)$ | Many-to-Many (Consumption) |
+| **`general.FM`** (False Merges) | $\sum_{\mathrm{pred}} \max(0, N_{\text{assigned gt}} - 1)$ | Many-to-Many (Consumption) |
+
 
 ### Localization Criteria
 **clDice (Benchmark Default)**
