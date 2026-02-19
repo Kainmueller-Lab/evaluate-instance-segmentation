@@ -13,12 +13,13 @@ This is the official implementation of the **FISBe (FlyLight Instance Segmentati
 
 The benchmark supports 2D and 3D segmentations and computes a wide range of commonly used evaluation metrics (e.g., AP, F1, coverage). Crucially, it provides specialized error attribution for topological errors (False Merges, False Splits) relevant to filamentous structures.
 
-### Features
-- **Standard Metrics:** AP, F1, Precision, Recall.
-- **FISBe Metrics:** Greedy many-to-many matching for False Merges (FM) and False Splits (FS).
+### Key Features
+- **Official Protocol:** Implements the exact ranking score ($S$) and matching logic defined in the FISBe paper.
+- **Topology-Aware:** Uses skeleton-based localization (`clDice`) to handle thin structures robustly.
+- **Error Attribution:** Explicitly quantifies False Merges (FM) and False Splits (FS) via many-to-many matching.
 - **Flexibility:** Supports HDF5 (`.hdf`, `.h5`) and Zarr (`.zarr`) files.
-- **Modes:** Run on single files, entire folders, or in stability analysis mode.
-- **Partly Labeled Data:** Robust evaluation ignoring background conflicts for sparse Ground Truth.
+- **Modes:** Single file, folder evaluation, or 3x stability analysis.
+- **Partly Labeled Support:** Robust evaluation that ignores background conflicts for sparse Ground Truth.
 
 ---
 
@@ -29,17 +30,14 @@ The recommended way to install is using `uv` (fastest) or `micromamba`.
 ### Option 1: Using `uv` (Fastest)
 
 ```bash
-# 1. Install uv (if not installed)
 pip install uv
-
-# 2. Clone and install
 git clone https://github.com/Kainmueller-Lab/evaluate-instance-segmentation.git
 cd evaluate-instance-segmentation
 uv venv
 uv pip install -e .
 ```
 
-### Option 2: Using `micromamba` or `conda`
+### Option 2: Using micromamba or conda
 
 ```bash
 micromamba create -n evalinstseg python=3.10
@@ -55,13 +53,13 @@ The `evalinstseg` command is automatically available after installation.
 
 ### 1. Evaluate a Single File
 ```bash
-evalinstseg `
-  --res_file tests/pred/R14A02-20180905_65_A6.hdf `
-  --res_key volumes/gmm_label_cleaned `
-  --gt_file tests/gt/R14A02-20180905_65_A6.zarr `
-  --gt_key volumes/gt_instances `
-  --split_file assets/sample_list_per_split.txt `
-  --out_dir tests/results `
+evalinstseg \
+  --res_file tests/pred/sample_01.hdf \
+  --res_key volumes/gmm_label_cleaned \
+  --gt_file tests/gt/sample_01.zarr \
+  --gt_key volumes/gt_instances \
+  --split_file assets/sample_list_per_split.txt \
+  --out_dir tests/results \
   --app flylight
 ```
 
@@ -69,12 +67,12 @@ evalinstseg `
 If you provide a directory path to `--res_file`, the tool will look for matching Ground Truth files in the `--gt_file` folder. Files are matched by name.
 
 ```bash
-evalinstseg `
-  --res_file /path/to/predictions_folder `
-  --res_key volumes/gmm_label_cleaned `
-  --gt_file /path/to/ground_truth_folder `
-  --gt_key volumes/gt_instances `
-  --out_dir /path/to/output_folder `
+evalinstseg \
+  --res_file /path/to/predictions_folder \
+  --res_key volumes/gmm_label_cleaned \
+  --gt_file /path/to/ground_truth_folder \
+  --gt_key volumes/gt_instances \
+  --out_dir /path/to/output_folder \
   --app flylight
 ```
 
@@ -91,11 +89,12 @@ evalinstseg \
 ```
 
 **Requirements:**
+
 - `--run_dirs`: Provide exactly 3 folders.
 - `--gt_file`: The folder containing Ground Truth files (filenames must match predictions).
 
 ### 4. Partly Labeled Data
-If your ground truth is sparse (not fully dense), use the `--partly` flag. T
+If your ground truth is sparse (not fully dense), use the `--partly` flag. See the **Partly Labeled Data Mode** section for details on how False Positives are handled.
 
 ## Usage: Python Package
 You can integrate the benchmark directly into your Python scripts or notebooks.
@@ -141,56 +140,46 @@ metrics = evaluate_volume(
     add_general_metrics=["false_merge", "false_split"]
 )
 ```
-### 4. Partly Labeled Data (`--partly`)
-Some samples contain sparse / incomplete GT annotations. In this setting, counting all unmatched predictions as false positives is not meaningful.
 
-When `--partly` is enabled, we approximate FP by counting only **unmatched predictions whose best match is a foreground GT instance** (based on the localization matrix used for evaluation, e.g. clPrecision for `cldice`).  
-Unmatched predictions whose best match is **background** are ignored.
+## FISBe Benchmark Protocol
+For a complete reference of all calculated metrics, see [docs/METRICS.md](docs/METRICS.md).
+> **Note:** Some output keys use internal names; see the documentation for the exact mapping to website/leaderboard columns.
 
-Concretely, we compute for each unmatched prediction the index of the GT label with maximal overlap score; it is counted as FP only if that index is > 0 (foreground), not 0 (background).
+### Official FlyLight Configuration (`--app flylight`)
+The `flylight` preset implements the specific metrics described in the FISBe paper for evaluating long-range thin filamentous neuronal structures.
 
----
+**Primary Ranking Score ($S$)**
+The single scalar used to rank methods on the leaderboard:
+$$S = 0.5 \cdot \text{avF1} + 0.5 \cdot C$$
 
-## Metrics Explanation
+**Key Metrics**
+- **avF1**: Average F1 score across clDice thresholds.
+- **C (Coverage)**: Average ground truth skeleton coverage (assigned via max clPrecision; score via clRecall on union of matches).  
+- **clDiceTP**: Average clDice score of matched True Positives (at threshold 0.5).
+- **tp**: Relative number of True Positives at threshold 0.5 ($TP_{0.5} / N_{GT}$).
+- **FS (False Splits)**: $\sum_{gt} \max(0, N_{\text{assigned\_pred}} - 1)$
+- **FM (False Merges)**: $\sum_{pred} \max(0, N_{\text{assigned\_gt}} - 1)$
 
-### 1. Standard Instance Metrics (TP/FP/FN, F-score, AP proxy)
-These metrics are computed from a **one-to-one matching** between GT and prediction instances (Hungarian or greedy), using a chosen localization criterion (default for FlyLight is `cldice`).
+### Partly Labeled Data Mode (`--partly`)
+FISBe includes 71 partly labeled images where only a subset of neurons is annotated.
+- **Logic**: Unmatched predictions are only counted as False Positives if they match a **Foreground GT instance**.
+- **Background Exclusion**: Predictions matching background (unlabeled regions) are ignored.
 
-- **TP**: matched pairs above threshold  
-- **FP**: unmatched predictions (or, in `--partly`, only those whose best match is foreground)  
-- **FN**: unmatched GT instances  
-- **precision** = TP / (TP + FP)  
-- **recall** = TP / (TP + FN)  
-- **fscore** = 2 * precision * recall / (precision + recall)  
-- **AP**: we report a simple AP proxy `precision × recall` at each threshold and average it across thresholds (this is not COCO-style AP).
+## Output Structure
+Metrics returned by the API or saved to disk are grouped into category-specific dictionaries:
 
-### 2. FISBe Error Attribution (False Splits / False Merges)
-False splits (FS) and false merges (FM) aim to quantify **instance topology errors** for long-range thin filamentous structures.
+```python
+metrics["confusion_matrix"]
+├── TP / FP / FN         # Counts across all images
+├── precision / recall   # Standard detection metrics
+└── avAP                 # Mean precision × recall proxy
 
-We compute FS/FM using **greedy many-to-many matching with consumption**:
-- Candidate GT–Pred pairs above threshold are processed in descending score order.
-- After selecting a match, we update “available” pixels so that already explained structure is not matched again.
-- FS counts when one GT is explained by multiple preds (excess preds per GT).
-- FM counts when one pred explains multiple GTs (excess GTs per pred).
+metrics["general"]
+├── aggregate_score      # S (Official Ranking Score)
+├── avg_gt_skel_coverage # C (Coverage)
+├── FM                   # Global False Merge count
+└── FS                   # Global False Split count
 
-This produces an explicit attribution of split/merge errors rather than only TP/FP/FN.
-
-### Metric Definitions
-
-#### Instance-Level (per threshold)
-| Metric | Description |
-| :--- | :--- |
-| **AP_TP** | True Positives (1-to-1 match) |
-| **AP_FP** | False Positives (unmatched preds; in `--partly`: only unmatched preds whose best match is foreground) |
-| **AP_FN** | False Negatives (unmatched GT) |
-| **precision** | TP / (TP + FP) |
-| **recall** | TP / (TP + FN) |
-| **fscore** | Harmonic mean of precision and recall |
-
-#### Global / FISBe
-| Metric | Description |
-| :--- | :--- |
-| **avAP** | Mean AP proxy across thresholds ≥ 0.5 |
-| **FM** | False Merges (many-to-many matching with consumption) |
-| **FS** | False Splits (many-to-many matching with consumption) |
-| **avg_gt_skel_coverage** | Mean skeleton coverage of GT instances by associated predictions (association via best-match mapping) |
+metrics["curves"]
+└── F1_0.1 … F1_0.9     # Per-threshold performance
+```
