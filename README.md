@@ -152,13 +152,14 @@ The `flylight` preset implements the specific metrics described in the FISBe pap
 The single scalar used to rank methods on the leaderboard:
 $$S = 0.5 \cdot \text{avF1} + 0.5 \cdot C$$
 
-**Key Metrics**
+### Key Metrics
+
 - **avF1**: Average F1 score across clDice thresholds.
-- **C (Coverage)**: Average ground truth skeleton coverage (assigned via max clPrecision; score via clRecall on union of matches).  
+- **C (Coverage)**: Average ground truth skeleton coverage (assigned via max clPrecision; score via clRecall on union of matches).
 - **clDiceTP**: Average clDice score of matched True Positives (at threshold 0.5).
-- **tp**: Relative number of True Positives at threshold 0.5 ($TP_{0.5} / N_{GT}$).
-- **FS (False Splits)**: $\sum_{gt} \max(0, N_{\text{assigned\_pred}} - 1)$
-- **FM (False Merges)**: $\sum_{pred} \max(0, N_{\text{assigned\_gt}} - 1)$
+- **tp**: Relative number of True Positives at threshold 0.5 ($TP_{0.5} / N_{\mathrm{GT}}$).
+- **FS (False Splits)**: $\sum_{\mathrm{gt}} \max(0, N_{\text{assigned\_pred}} - 1)$
+- **FM (False Merges)**: $\sum_{\mathrm{pred}} \max(0, N_{\text{assigned\_gt}} - 1)$
 
 ### Partly Labeled Data Mode (`--partly`)
 FISBe includes 71 partly labeled images where only a subset of neurons is annotated.
