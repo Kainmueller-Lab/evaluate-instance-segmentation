@@ -38,6 +38,33 @@ def crop(arr, target_shape):
     return arr[leading + trailing]
 
 
+def load_partly_config(list_file_path):
+    """
+    Parses the sample_list_per_split.txt to identify which files 
+    are 'partly' labeled.
+    """
+    partly_samples = set()
+    is_partly_section = False
+    
+    with open(list_file_path, 'r') as f:
+        for line in f:
+            line = line.strip()
+            if not line: continue
+            
+            # Detect section headers
+            if "(1) samples for FlyLight completely:" in line:
+                is_partly_section = False
+            elif "(2) samples for FlyLight partly:" in line:
+                is_partly_section = True
+            elif line.endswith(":") and line[:-1] in ["train", "val", "test"]:
+                continue # Skip split headers
+            else:
+                # It's a filename
+                if is_partly_section:
+                    partly_samples.add(line)
+                    
+    return partly_samples
+
 def check_and_fix_sizes(gt_labels, pred_labels, ndim):
     """check if prediction and gt have same size, otherwise crop the bigger one
     add channel dimension if missing (channel_first)

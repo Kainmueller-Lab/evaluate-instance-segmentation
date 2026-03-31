@@ -1,5 +1,6 @@
 import logging
 import toml
+import numpy as np
 
 logger = logging.getLogger(__name__)
 
@@ -23,8 +24,22 @@ class Metrics:
     def save(self):
         """dump results to toml file."""
         logger.info("saving %s", self.fn)
+
+        def convert_numpy(obj):
+            if isinstance(obj, np.integer):
+                return int(obj)
+            elif isinstance(obj, np.floating):
+                return float(obj)
+            elif isinstance(obj, np.ndarray):
+                return obj.tolist()
+            elif isinstance(obj, dict):
+                return {k: convert_numpy(v) for k, v in obj.items()}
+            elif isinstance(obj, list):
+                return [convert_numpy(i) for i in obj]
+            return obj
+
         with open(self.fn + ".toml", "w") as tomlFl:
-            toml.dump(self.metricsDict, tomlFl)
+            toml.dump(convert_numpy(self.metricsDict), tomlFl)
 
     def addTable(self, name, dct=None):
         """add new sub-table to result dict
