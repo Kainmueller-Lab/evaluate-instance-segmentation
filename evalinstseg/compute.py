@@ -96,7 +96,9 @@ def get_gt_coverage_dim(
         avg_cov_dim = np.mean(gt_covs_dim)
         # compute tp
         if np.max(locMat_subset[1:, 1:]) > 0.5:
-            tp_05_dim, _, _ = assign_labels(locMat_subset, assignment_strategy, 0.5, 1)
+            tp_05_dim, _, _ = assign_labels(
+                locMat_subset, assignment_strategy, 0.5, min(gt_dim, num_pred_labels)
+            )
         tp_05_rel_dim = tp_05_dim / float(gt_dim)
     return gt_dim, tp_05_dim, tp_05_rel_dim, gt_covs_dim, avg_cov_dim
 
@@ -155,7 +157,9 @@ def get_gt_coverage_overlap(
 
         # compute tp
         if np.max(locMat_subset[1:, 1:]) > 0.5:
-            tp_05_ovlp, _, _ = assign_labels(locMat_subset, assignment_strategy, 0.5, 1)
+            tp_05_ovlp, _, _ = assign_labels(
+                locMat_subset, assignment_strategy, 0.5, min(gt_ovlp, num_pred_labels)
+            )
         tp_05_rel_ovlp = tp_05_ovlp / float(gt_ovlp)
     return gt_ovlp, tp_05_ovlp, tp_05_rel_ovlp, gt_covs_ovlp, avg_cov_ovlp
 

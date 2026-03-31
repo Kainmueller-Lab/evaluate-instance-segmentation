@@ -14,7 +14,9 @@ from .util import (
     check_fix_and_unify_ids,
     get_output_name,
     read_file,
-    load_partly_config
+    load_partly_config,
+    flatten_dict,
+    print_and_collect_stats
 )
 from .localize import compute_localization_criterion
 from .match import assign_labels, get_false_labels
@@ -80,6 +82,9 @@ def evaluate_file(
     -------
     dict: contains computed metrics
     """
+    if kwargs.get("debug", False):
+        logging.getLogger().setLevel(logging.DEBUG)
+
     # check for deprecated args
     if kwargs.get("use_linear_sum_assignment", False):
         assignment_strategy = "hungarian"
@@ -212,6 +217,7 @@ def evaluate_volume(
             dim_insts=dim_insts,
         )
     else:
+        dim_insts_rel = []
         gt_labels_rel, pred_labels_rel = check_fix_and_unify_ids(
             gt_labels, pred_labels, remove_small_components, foreground_only
         )
@@ -250,6 +256,8 @@ def evaluate_volume(
     ths = [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 0.55, 0.65, 0.75, 0.85, 0.95]
     aps = []
     fscores = []
+    tp_05 = 0
+    tp_05_cldice = []
     metrics.addTable("confusion_matrix")
     for th in ths:
         tblname = "confusion_matrix.th_" + str(th).replace(".", "_")
@@ -358,7 +366,10 @@ def evaluate_volume(
     metrics.addMetric("general", "TP_05", tp_05)
     metrics.addMetric("general", "TP_05_rel", tp_05 / float(num_gt_labels))
     metrics.addMetric("general", "TP_05_cldice", tp_05_cldice)
-    metrics.addMetric("general", "avg_TP_05_cldice", np.mean(tp_05_cldice))
+    if len(tp_05_cldice) > 0:
+        metrics.addMetric("general", "avg_TP_05_cldice", np.mean(tp_05_cldice))
+    else:
+        metrics.addMetric("general", "avg_TP_05_cldice", 0.0)
 
     # additional metrics
     if len(add_general_metrics) > 0:
@@ -472,29 +483,6 @@ def evaluate_volume(
     return metrics
 
 
-def print_and_collect_stats(mode_name, score_list, num_expected_runs):
-    """Calculates Mean ± Std for stability runs and prepares data for export."""
-    if not score_list:
-        return []
-
-    print(f"\n--- {mode_name} ---")
-    report_rows = []
-    keys = score_list[0].keys()
-
-    for key in keys:
-        vals = [s[key] for s in score_list if key in s]
-        if len(vals) == num_expected_runs:
-            mean_val = np.mean(vals)
-            std_val = np.std(vals)
-            print(f"{key:<30}: {mean_val:.4f} ± {std_val:.4f}")
-
-            report_rows.append({
-                "Mode": mode_name,
-                "Metric": key,
-                "Mean": mean_val,
-                "StdDev": std_val
-            })
-    return report_rows
 
 
 # TODO: option to just pass config (toml) file instead of flags
@@ -519,7 +507,7 @@ def main():
         help="Path to sample split file"
     )
     parser.add_argument(
-        "--res_file", nargs="+", type=str, help="path to result file"
+        "--res_file", nargs="+", type=str, help="path to result file (required unless --stability_mode is used)"
     )
     parser.add_argument(
         "--gt_file",
@@ -784,6 +772,9 @@ def main():
                 "out_dir": os.path.join(args.out_dir[0], f"seed_{i+1}")
             })
     else:
+        if not args.res_file:
+            parser.error("--res_file is required when not in --stability_mode")
+
         # Detect if res_file is a directory or a list of specific files
         if len(args.res_file) == 1 and os.path.isdir(args.res_file[0]) and not args.res_file[0].endswith(".zarr"):
             run_configs.append({"res_dir": args.res_file[0], "out_dir": args.out_dir[0]})
@@ -851,9 +842,9 @@ def main():
         # MODE: Stability (Mean ± Std)
         print("\n=== FISBe BENCHMARK RESULTS (Mean ± Std) ===")
         # Extract mean dicts from each run
-        cpt_scores = [r["scores"][0][0] for r in all_run_data if r["scores"][0]]
-        prt_scores = [r["scores"][1][0] for r in all_run_data if r["scores"][1]]
-        comb_scores = [r["scores"][2][0] for r in all_run_data if r["scores"][2]]
+        cpt_scores = [r["scores"][0][1] for r in all_run_data if r["scores"][0] is not None]
+        prt_scores = [r["scores"][1][1] for r in all_run_data if r["scores"][1] is not None]
+        comb_scores = [r["scores"][2][1] for r in all_run_data if r["scores"][2] is not None]
         
         stability_rows = []
         stability_rows += print_and_collect_stats("MODE 1: COMPLETE", cpt_scores, 3)

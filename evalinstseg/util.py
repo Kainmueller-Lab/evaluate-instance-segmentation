@@ -272,9 +272,6 @@ def filter_components(volume, thresh):
 from itertools import count
 import heapq
 
-from itertools import count
-import heapq
-
 class LazyHeap:
     """A min-heap with lazy invalidation.
 
@@ -321,3 +318,56 @@ class LazyHeap:
     def empty(self):
         self.discard_stale_head()
         return not self._heap
+
+
+def flatten_dict(d, parent_key='', sep='.'):
+    items = []
+    for k, v in d.items():
+        new_key = f"{parent_key}{sep}{k}" if parent_key else k
+        if isinstance(v, dict):
+            items.extend(flatten_dict(v, new_key, sep=sep).items())
+        else:
+            items.append((new_key, v))
+    return dict(items)
+
+
+def print_and_collect_stats(mode_name, score_list, num_expected_runs):
+    """Calculates Mean ± Std for stability runs and prepares data for export."""
+    if not score_list:
+        return []
+
+    # Flatten dictionaries first
+    flat_scores = []
+    for s in score_list:
+        flat_scores.append(flatten_dict(s))
+
+    print(f"\\n--- {mode_name} ---")
+    report_rows = []
+    
+    # Use keys from first run as reference
+    if not flat_scores:
+        return []
+        
+    keys = sorted(flat_scores[0].keys())
+
+    for key in keys:
+        vals = [s[key] for s in flat_scores if key in s]
+        if len(vals) == num_expected_runs:
+            try:
+                # Attempt to convert to float array for stats
+                # This handles scalars. Lists/arrays will raise ValueError or result in object array
+                vals_arr = np.array(vals, dtype=float)
+                mean_val = np.mean(vals_arr)
+                std_val = np.std(vals_arr)
+                print(f"{key:<40}: {mean_val:.4f} ± {std_val:.4f}")
+
+                report_rows.append({
+                    "Mode": mode_name,
+                    "Metric": key,
+                    "Mean": mean_val,
+                    "StdDev": std_val
+                })
+            except (ValueError, TypeError):
+                # Skip non-numeric metrics (like lists of coverage values)
+                continue
+    return report_rows

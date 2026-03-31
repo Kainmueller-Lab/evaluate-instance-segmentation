@@ -148,30 +148,35 @@ def average_flylight_score_over_instances(samples_foldn, result):
                                   "th_" + str(thresh).replace(".", "_")][
                                   "AP_FN"])
     for thresh in threshs:
-        fscores.append(2 * np.sum(tp[thresh]) / (
-            2 * np.sum(tp[thresh]) + np.sum(fp[thresh]) + np.sum(fn[thresh])))
-    avS = 0.5 * np.mean(fscores) + 0.5 * np.mean(gt_covs)
+        denominator = 2 * np.sum(tp[thresh]) + np.sum(fp[thresh]) + np.sum(fn[thresh])
+        if denominator > 0:
+            fscores.append(2 * np.sum(tp[thresh]) / denominator)
+        else:
+            fscores.append(0.0)
+
+    gt_cov_mean = np.mean(gt_covs) if gt_covs else 0.0
+    avS = 0.5 * np.mean(fscores) + 0.5 * gt_cov_mean
 
     per_instance_counts = {}
     per_instance_counts["general"] = {
         "Num GT": np.sum(num_gt),
         "Num Pred": np.sum(num_pred),
-        "avg_gt_skel_coverage": (np.mean(gt_covs)) if gt_covs else 0.0,
+        "avg_gt_skel_coverage": gt_cov_mean,
         "avg_f1_cov_score": avS,
         "avFscore": (np.mean(fscores)) if fscores else 0.0,
         "FM": np.sum(fm),
         "FS": np.sum(fs),
         "TP_05": np.sum(tp_05),
-        "TP_05_rel": np.sum(tp_05) / float(np.sum(num_gt)),
+        "TP_05_rel": (np.sum(tp_05) / float(np.sum(num_gt))) if np.sum(num_gt) > 0 else 0.0,
         "TP_05_cldice": tp_05_cldice,
         "avg_TP_05_cldice": np.mean(tp_05_cldice) if np.sum(tp_05) > 0 else 0.0,
         "GT_dim": np.sum(gt_dim),
         "TP_05_dim": np.sum(tp_05_dim),
-        "TP_05_rel_dim": (np.sum(tp_05_dim) / float(np.sum(gt_dim))) if gt_dim else 0.0,
+        "TP_05_rel_dim": (np.sum(tp_05_dim) / float(np.sum(gt_dim))) if np.sum(gt_dim) > 0 else 0.0,
         "avg_gt_cov_dim": (np.mean(gt_covs_dim)) if gt_covs_dim else 0.0,
         "GT_overlap": np.sum(gt_ovlp),
         "TP_05_overlap": np.sum(tp_05_ovlp),
-        "TP_05_rel_overlap": (np.sum(tp_05_ovlp) / float(np.sum(gt_ovlp))) if gt_ovlp else 0.0,
+        "TP_05_rel_overlap": (np.sum(tp_05_ovlp) / float(np.sum(gt_ovlp))) if np.sum(gt_ovlp) > 0 else 0.0,
         "avg_gt_cov_overlap": (np.mean(gt_covs_ovlp)) if gt_covs_ovlp else 0.0
     }
     per_instance_counts["confusion_matrix"] = {"avFscore": np.mean(fscores)}

@@ -26,6 +26,7 @@ class Metrics:
         logger.info("saving %s", self.fn)
 
         def convert_numpy(obj):
+            """Helper function to convert numpy objects to python native types for toml dumping."""
             if isinstance(obj, np.integer):
                 return int(obj)
             elif isinstance(obj, np.floating):

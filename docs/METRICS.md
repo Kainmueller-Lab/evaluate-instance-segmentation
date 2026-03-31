@@ -49,7 +49,6 @@ Explicit counts of topological errors specific to filamentous structures.
 | **`general.FS`** (False Splits) | $\sum_{\mathrm{gt}} \max(0, N_{\text{assigned pred}} - 1)$ | Many-to-Many (Consumption) |
 | **`general.FM`** (False Merges) | $\sum_{\mathrm{pred}} \max(0, N_{\text{assigned gt}} - 1)$ | Many-to-Many (Consumption) |
 
-
 ### Localization Criteria
 **clDice (Benchmark Default)**
 Centerline Dice evaluates the agreement between skeletonized structures. It is the robust choice for thin filamentous objects where standard pixel-level IoU is mathematically unstable due to small boundary variations.
