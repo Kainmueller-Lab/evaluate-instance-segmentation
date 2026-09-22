@@ -262,6 +262,45 @@ class TestMetrics(unittest.TestCase):
             ),
         )
 
+class TestGtCoverageOverlap(unittest.TestCase):
+    H = W = 128
+
+    def _mask(self, y0, y1, x0, x1):
+        m = np.zeros((self.H, self.W), np.uint16)
+        m[y0:y1, x0:x1] = 1
+        return m
+
+    def _evaluate(self, gt, pred):
+        import tempfile, os
+
+        with tempfile.TemporaryDirectory() as out:
+            return evaluate_volume(
+                gt,
+                pred,
+                ndim=2,
+                outFn=os.path.join(out, "out"),
+                localization_criterion="cldice",
+                assignment_strategy="greedy",
+                evaluate_false_labels=True,
+                remove_small_components=None,
+                add_general_metrics=["avg_gt_skel_coverage", "avg_f1_cov_score"],
+            ).metricsDict["general"]
+
+    def test_2d_overlapping_pred_disjoint_gt_coverage_le_1(self):
+        # issue #20: overlapping preds on one gt must not be double counted
+        gt = np.stack([self._mask(30, 35, 20, 108), self._mask(70, 75, 20, 108)])
+        pred = np.stack([gt[0], gt[0].copy(), gt[1]])
+        metrics = self._evaluate(gt, pred)
+        self.assertAlmostEqual(metrics["avg_gt_skel_coverage"], 1.0)
+
+    def test_2d_overlapping_gt_and_pred_no_crash(self):
+        # issue #19: coverage union path crashed for 2d input
+        a = np.maximum(self._mask(60, 65, 20, 108), self._mask(20, 108, 60, 65))
+        b = np.maximum(self._mask(30, 35, 20, 108), self._mask(20, 108, 30, 35))
+        stack = np.stack([a, b])
+        metrics = self._evaluate(stack, stack.copy())
+        self.assertAlmostEqual(metrics["avg_gt_skel_coverage"], 1.0)
+
 
 if __name__ == "__main__":
     unittest.main()
