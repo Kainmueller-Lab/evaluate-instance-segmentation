@@ -149,7 +149,9 @@ def get_centerline_overlap_single(
     `compare_with` has with the skeletons, for a single pair of labels)
     """
     to_skeletonize = to_skeletonize == skeletonize_label
-    if to_skeletonize.ndim == 4:
+    # remove channel dim via max projection (4 dims for 3d data; for 2d data
+    # the channel dim is detected by the rank difference to `compare_with`)
+    if to_skeletonize.ndim == 4 or to_skeletonize.ndim == compare_with.ndim + 1:
         to_skeletonize = np.max(to_skeletonize, axis=0)
     # note: skeletonize also works for 2d images
     skeleton = skeletonize(to_skeletonize) > 0

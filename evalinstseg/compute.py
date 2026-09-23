@@ -20,10 +20,7 @@ def get_gt_coverage(gt_labels, pred_labels, precMat, recallMat):
     max_gt_ind = np.argmax(precMat, axis=0)
 
     gt_cov = []
-    # if both gt and pred have overlapping instances
-    if np.any(np.sum(gt_labels, axis=0) != np.max(gt_labels, axis=0)) and np.any(
-        np.sum(pred_labels, axis=0) != np.max(pred_labels, axis=0)
-    ):
+    if np.any(np.sum(pred_labels, axis=0) != np.max(pred_labels, axis=0)):
         # recalculate clRecall for each gt and union of assigned
         # predictions, as predicted instances can potentially overlap
         max_gt_ind_unique = np.unique(max_gt_ind[max_gt_ind > 0])
